@@ -1,2 +1,2 @@
 # java-notes
-notes of java
+java±Ê¼Ç
