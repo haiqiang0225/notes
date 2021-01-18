@@ -36,63 +36,57 @@ AQS内部主要有一个变量state、一个严格FIFO的CLH队列、内部类No
     //前驱节点使用完锁
     this.status = unlocked;
     ```
-对MCS锁和CLH锁感兴趣的同学可以深入去了解一下，如果只是看AQS源码的话，知道这些就已经足够了。
+对MCS锁和CLH锁感兴趣的同学可以深入去了解一下，如果只是看AQS源码的话，大致了解一下这些知识就已经足够了。
 
-3. AQS中实现的CLH队列是一个双向链表的数据结构，每个节点保存前驱节点的引用```prev```和后驱节点的引用```next```。
+    AQS中CLH队列实现是一个双向链表的数据结构，每个节点显式的保存前驱节点的引用```prev```和后驱节点的引用```next```，一个节点对应一个线程，只有获取资源（tryAcquire）失败的线程，才会被封装为Node并且进入同步队列进行调度，直接获取成功的线程是不会进入同步队列进行调度的。
 
   [![ssLKFs.png](https://s3.ax1x.com/2021/01/17/ssLKFs.png)](https://imgchr.com/i/ssLKFs)
 
-4. ConditionObject：用于提供条件等待队列的支持，提供类似于Object类的wait和signal的api，内部维护了一个单链表，调用了await的线程会释放已经获取的资源并加入到该链表中。当有其他线程调用signal时，被唤醒的线程（可能是多个）会重新加入CLH同步队列中参与资源的争夺。
-
+3. ConditionObject：用于提供条件等待队列的支持，提供类似于Object类的wait和signal的api，内部维护了一个单链表，调用了await的线程会释放已经获取的资源并加入到该链表中。当有其他线程调用signal时，被唤醒的线程（可能是多个）会重新加入CLH同步队列中参与资源的争夺。  
 
 ## 1.1内部类Node
-```java
+
+ ```java
 static final class Node {
-        /** Marker to indicate a node is waiting in shared mode */
+        //用于标识当前节点为共享模式
         static final Node SHARED = new Node();
-        /** Marker to indicate a node is waiting in exclusive mode */
+        //用于标识当前节点为独占模式
         static final Node EXCLUSIVE = null;
 
-        /** waitStatus value to indicate thread has cancelled */
+        //waitStatus的具体值，用于指示当前节点已被取消
         static final int CANCELLED =  1;
-        /** waitStatus value to indicate successor's thread needs unparking */
+        //waitStatus的具体值，表示当前节点释放资源后需要唤醒后继有效结点
         static final int SIGNAL    = -1;
-        /** waitStatus value to indicate thread is waiting on condition */
+        //waitStatus的具体值，指明当前节点在某个CONDITION上等待
         static final int CONDITION = -2;
         /**
-         * waitStatus value to indicate the next acquireShared should
-         * unconditionally propagate
+         * waitStatus的具体值，表明下一个acquireShared应该无条件的传播，
+         * 因为在共享模式下，可能有多个线程会同时获得资源，也有可能某个线程释放
+         * 的资源个数可以供多个同步队列中的节点获取，因此可能需要唤醒多个同步
+         * 队列中的线程
          */
         static final int PROPAGATE = -3;
-
-
-​        
-        volatile int waitStatus;
-
-
-​       
-        volatile Node prev;
-
-
-​      
-        volatile Node next;
-
-
-​       
-        volatile Thread thread;
-
-
-​       
-        Node nextWaiter;
-
-
-​       
+        //线程的等待状态
+        volatile int waitStatus;  
+        //前驱节点的引用
+        volatile Node prev; 
+        //后驱节点的引用
+        volatile Node next; 
+        //被封装的线程的引用
+        volatile Thread thread;   
+        /**
+         * 这个引用有两个用处，当节点位于同步队列中时，nexWaiter用于标识线程是共享
+         * 模式还是独占模式，当节点位于等待队列中时，nexWaiter用于保存下一个等待
+         * 节点的引用
+         */
+        Node nextWaiter; 
+        
+        //判断节点是否为共享模式
         final boolean isShared() {
             return nextWaiter == SHARED;
         }
-
-
-​      
+    
+        //获得直接前驱
         final Node predecessor() throws NullPointerException {
             Node p = prev;
             if (p == null)
@@ -114,9 +108,89 @@ static final class Node {
             this.thread = thread;
         }
     }
-```
+ ```
+
 ## 1.2内部类ConditionObject
 
+ ```java
+public class ConditionObject implements Condition, java.io.Serializable {
+        private static final long serialVersionUID = 1173984872572414699L;
+        /** First node of condition queue. */
+        private transient Node firstWaiter;
+        /** Last node of condition queue. */
+        private transient Node lastWaiter;
+
+        public ConditionObject() { }
+
+        private Node addConditionWaiter() {
+        }
+
+        private void doSignal(Node first) { 
+        }
+
+        private void doSignalAll(Node first) { 
+        }
+
+        private void unlinkCancelledWaiters() {
+        }
+
+    
+        public final void signal() {
+        }
+
+        public final void signalAll() {
+        }
+    
+        public final void awaitUninterruptibly() {
+        }
+
+      
+        private static final int REINTERRUPT =  1;
+       
+        private static final int THROW_IE    = -1;
+
+      
+        private int checkInterruptWhileWaiting(Node node) {
+            return Thread.interrupted() ?
+                (transferAfterCancelledWait(node) ? THROW_IE : REINTERRUPT) :
+                0;
+        }
+
+        private void reportInterruptAfterWait(int interruptMode)
+            throws InterruptedException {
+        }
+
+      
+        public final void await() throws InterruptedException {           
+        }
+
+        public final long awaitNanos(long nanosTimeout)
+                throws InterruptedException {     
+        }
+
+        public final boolean awaitUntil(Date deadline)
+                throws InterruptedException {         
+        }
+    
+        public final boolean await(long time, TimeUnit unit)
+                throws InterruptedException {    
+        }
+
+    
+        final boolean isOwnedBy(AbstractQueuedSynchronizer sync) {
+            return sync == AbstractQueuedSynchronizer.this;
+        }
+
+        protected final boolean hasWaiters() {
+        }
+
+        protected final int getWaitQueueLength() { 
+        }
+
+        protected final Collection<Thread> getWaitingThreads() {
+        }
+    }
+ ```
 # 2.AQS源码
 ## 2.1acquire
 ## 2.2release
