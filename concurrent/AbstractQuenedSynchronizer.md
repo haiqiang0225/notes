@@ -30,9 +30,9 @@ AQS内部主要有一个变量state、一个严格FIFO的CLH队列、内部类No
 
     ```java
     //申请锁的线程在前驱的本地变量上自旋
-    while(pred.status == locked) { //表示前驱节点仍占用着锁,在传统的CLH队列中，这个pred并不是真正的引用，这里只是方便理解才加上了pred，实际上应
-        //让出cpu                   //为status == locked，而这个status就是前驱的本地变量status，因为我们只需要在前驱的status上自旋，实际上
-    }                              //并不需要前驱节点的引用
+    while(pred.status == locked) {  //表示前驱节点仍占用着锁,在传统的CLH队列中，这个pred并不是真正的引用，这里只是方便理解才加上了pred，
+        //让出cpu                   //实际上应为status == locked，而这个status就是前驱的本地变量status，因为我们只需要在前驱的status上自旋，
+    }                               //实际上并不需要前驱节点的引用
     //前驱节点使用完锁
     this.status = unlocked;
     ```
