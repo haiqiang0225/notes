@@ -4,7 +4,7 @@
 AbstractQuenedSynchronizer从名字就能看出AQS是一个_抽象的_基于队列的同步器。AQS本身是作为框架使用的，juc（java.util.concurrent）包中很多同步工具比如ReentrantLock、CountDownLatch、Semphore、ReentrantReadWriteLock、FutureTask等类都是基于AQS来实现的，这几个工具都有作为同步工具的AQS的子类```Sync extends AbstractQueuedSynchronizer```。AQS提供了对内部资源state的原子性管理以及对线程调度的管理。
 AQS内部主要有一个变量state、一个严格FIFO的CLH队列、内部类Node和ConditionObject  
 
-1. volatile的变量state：该变量可以抽象的理解为资源的数量，比如在ReentrantLock中该变量就可以表示为是否获得锁以及获得锁的次数。
+1. volatile的变量state：该变量可以抽象的理解为资源的数量，比如在ReentrantLock中该变量就可以表示为是否获得锁以及获得锁的次数。AQS提供了三种方式来修改state的值，```protected final int getState()```、```protected final void setState(int newState)```、```protected final boolean compareAndSetState(int expect, int update) ```，子类可以直接调用这三个方法但不能重写这三个方法。
 
 2. Node：用于封装线程,添加了一些有用的状态标识信息，例如当前节点是否为独占模式、等待状态、前驱后去节点的引用。获取资源失败的线程会被封装为Node然后加入到CLH同步队列中。
 
@@ -39,7 +39,7 @@ AQS内部主要有一个变量state、一个严格FIFO的CLH队列、内部类No
     ```
     对MCS锁和CLH锁感兴趣的同学可以深入去了解一下，如果只是看AQS源码的话，大致了解一下这些知识就已经足够了。 
     
-    AQS中CLH队列实现是一个双向链表的数据结构，每个节点显式的保存前驱节点的引用```prev```和后驱节点的引用```next```，一个节点对应一个线程，只有获取资源（tryAcquire）失败的线程，才会被封装为Node并且进入同步队列进行调度，直接获取成功的线程是不会进入同步队列进行调度的。
+    AQS中CLH队列实现是一个双向链表的数据结构，每个节点显式的保存前驱节点的引用```prev```和后驱节点的引用```next```，一个节点对应一个线程，只有获取资源（tryAcquire/tryAcquireShared）失败的线程，才会被封装为Node并且进入同步队列进行调度，直接获取成功的线程是不会进入同步队列进行调度的。需要注意的是head指向的节点是没有对应线程的，换句话说就是如果一个节点成为了头节点么这个节点对应的线程已经成功获得了资源了，且同步队列中只有头节点的下一个结点会尝试执行tryAcquire(Shared)来获得资源，而其他的节点是不会尝试获得资源的。
 
   [![ssLKFs.png](https://s3.ax1x.com/2021/01/17/ssLKFs.png)](https://imgchr.com/i/ssLKFs)
 
@@ -197,6 +197,4 @@ public class ConditionObject implements Condition, java.io.Serializable {
 ## 2.2release
 ## 2.3acquireShared
 ## 2.4releaseShared
-  ```
-
-  ```
+# 3.AQS的使用
