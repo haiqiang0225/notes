@@ -76,7 +76,7 @@ static final class Node {
         //被封装的线程的引用
         volatile Thread thread;   
         /**
-         * 这个引用有两个用处，当节点位于同步队列中时，nexWaiter用于标识线程是共享
+         * 这个引用有两个用处，当节点位于同步队列中时，nextWaiter用于标识线程是共享
          * 模式还是独占模式，当节点位于等待队列中时，nexWaiter用于保存下一个等待
          * 节点的引用
          */
@@ -115,6 +115,7 @@ static final class Node {
 | 属性 |描述|
 |:---:|:----|
 |waitStatus|表示了当前节点的状态，总共有5种状态。<br />  1. 0，代表初始状态或者中间状态<br />  2. SIGNAL，代表当前节点需要在释放资源后唤醒一个后继节点来获取资源<br />  3. CONDITION，代表节点此时在等待队列中而不在同步队列中<br />  4. PROPAGATE，代表下一个acquireShared应该无条件传播，在```shouldParkAfterFailedAcquire```方法中体现<br />  5. CANCELLED， 代表当前节点已经被取消，此状态是唯一一个大于0的状态|
+|nextWaiter|当节点位于同步队列中时，nextWaiter用于标识线程是共享<br />当节点位于阻塞队列时，nextWaiter用于保存下一个节点的引用|
 
 ## 1.2内部类ConditionObject
 
