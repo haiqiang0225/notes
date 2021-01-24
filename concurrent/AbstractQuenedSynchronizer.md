@@ -118,82 +118,8 @@ static final class Node {
 |nextWaiter|当节点位于同步队列中时，nextWaiter用于标识线程是共享<br />当节点位于阻塞队列时，nextWaiter用于保存下一个节点的引用|
 
 ## 1.2内部类ConditionObject
+```ConditionObject```实现了```java.util.concurrent.locks.Condition```接口,提供了类似Object类的wait和signal（就是java管程）类似的api。与Object类的wait/signal相似，Condition需要与锁一起使用，在调用```Condition#await```之前需要先获得锁，否则会抛出```IllegalMonitorStateException```。
 
- ```java
-public class ConditionObject implements Condition, java.io.Serializable {
-        private static final long serialVersionUID = 1173984872572414699L;
-        /** First node of condition queue. */
-        private transient Node firstWaiter;
-        /** Last node of condition queue. */
-        private transient Node lastWaiter;
-
-        public ConditionObject() { }
-
-        private Node addConditionWaiter() {
-        }
-
-        private void doSignal(Node first) { 
-        }
-
-        private void doSignalAll(Node first) { 
-        }
-
-        private void unlinkCancelledWaiters() {
-        }
-
-    
-        public final void signal() {
-        }
-
-        public final void signalAll() {
-        }
-    
-        public final void awaitUninterruptibly() {
-        }
-
-      
-        private static final int REINTERRUPT =  1;
-       
-        private static final int THROW_IE    = -1;
-
-      
-        private int checkInterruptWhileWaiting(Node node) {
-        }
-
-        private void reportInterruptAfterWait(int interruptMode)
-            throws InterruptedException {
-        }
-
-      
-        public final void await() throws InterruptedException {           
-        }
-
-        public final long awaitNanos(long nanosTimeout)
-                throws InterruptedException {     
-        }
-
-        public final boolean awaitUntil(Date deadline)
-                throws InterruptedException {         
-        }
-    
-        public final boolean await(long time, TimeUnit unit)
-                throws InterruptedException {    
-        }
-
-    
-        final boolean isOwnedBy(AbstractQueuedSynchronizer sync) {
-        }
-
-        protected final boolean hasWaiters() {
-        }
-
-        protected final int getWaitQueueLength() { 
-        }
-
-        protected final Collection<Thread> getWaitingThreads() {
-        }
-    }
- ```
 # 2.AQS源码
 ## 2.1acquire
 ## 2.2release
