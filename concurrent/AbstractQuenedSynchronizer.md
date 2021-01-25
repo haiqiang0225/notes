@@ -115,6 +115,8 @@ static final class Node {
 | 属性 |描述|
 |:---:|:----|
 |waitStatus|表示了当前节点的状态，总共有5种状态。<br />  1. 0，代表初始状态或者中间状态<br />  2. SIGNAL，代表当前节点需要在释放资源后唤醒一个后继节点来获取资源<br />  3. CONDITION，代表节点此时在等待队列中而不在同步队列中<br />  4. PROPAGATE，代表下一个acquireShared应该无条件传播，在```shouldParkAfterFailedAcquire```方法中体现<br />  5. CANCELLED， 代表当前节点已经被取消，此状态是唯一一个大于0的状态|
+|prev|前驱节点的引用，prev是通过CAS的方式来原子性的插入链表的|
+|next|后驱节点的引用，next的设置并非原子性的，仅作为一种优化手段，如果一个节点的next字段为null，并不一定表示该节点没有后继节点了，总是可以通过prev来向前访问，查看是否有有效后继节点|
 |nextWaiter|当节点位于同步队列中时，nextWaiter用于标识线程是共享<br />当节点位于阻塞队列时，nextWaiter用于保存下一个节点的引用|
 
 ## 1.2内部类ConditionObject
