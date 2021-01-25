@@ -2,7 +2,7 @@
 # 1.AQS简介
 首先从大局上介绍一下AQS和一些相关的知识，这部分对后面阅读源码有帮助，熟悉这些概念的同学也可以跳过。
 AbstractQuenedSynchronizer从名字就能看出AQS是一个_抽象的_基于队列的同步器。AQS本身是作为框架使用的，juc（java.util.concurrent）包中很多同步工具比如ReentrantLock、CountDownLatch、Semphore、ReentrantReadWriteLock、FutureTask等类都是基于AQS来实现的，这几个工具都有作为同步工具的AQS的子类```Sync extends AbstractQueuedSynchronizer```。AQS提供了对内部资源state的原子性管理以及对线程调度的管理。
-AQS内部主要有一个变量state、一个严格FIFO的CLH队列、内部类Node和ConditionObject，其中ConditionObject提供了等待队列，也就是说AQS中是有两个队列的：一个用于同步调度的CLH**同步队列**和一个用于实现Condition的**等待队列**。
+AQS内部主要有一个变量state、一个严格FIFO的CLH队列、内部类Node和ConditionObject，其中ConditionObject提供了等待队列，也就是说AQS中是有两个队列的：一个用于同步调度的CLH**同步队列**和一个用于实现Condition的**等待队列**。ConditionObject与锁配合使用，可以实现类似java管程（Object的wait/singal）的功能。
 
 1. **volatile的变量state**：该变量可以抽象的理解为资源的数量，比如在ReentrantLock中该变量就可以表示为是否获得锁以及获得锁的次数。AQS提供了三种方式来修改state的值，```protected final int getState()```、```protected final void setState(int newState)```、```protected final boolean compareAndSetState(int expect, int update) ```，子类可以直接调用这三个方法但不能重写这三个方法。
 
@@ -118,7 +118,7 @@ static final class Node {
 |nextWaiter|当节点位于同步队列中时，nextWaiter用于标识线程是共享<br />当节点位于阻塞队列时，nextWaiter用于保存下一个节点的引用|
 
 ## 1.2内部类ConditionObject
-```ConditionObject```实现了```java.util.concurrent.locks.Condition```接口,提供了类似Object类的wait和signal（就是java管程）类似的api。与Object类的wait/signal相似，Condition需要与锁一起使用，在调用```Condition#await```之前需要先获得锁，否则会抛出```IllegalMonitorStateException```。
+```ConditionObject```实现了```java.util.concurrent.locks.Condition```接口,提供了类似Object类的wait和signal（就是java管程）类似的api。与Object类的wait/signal相似，Condition需要与锁一起使用，在调用```Condition#await```之前需要先获得锁，否则会抛出```IllegalMonitorStateException```。一个锁可以与多个```ConditionObject```绑定，这是AQS比Java自带的wait/signal更加强大的地方。
 
 # 2.AQS源码
 ## 2.1acquire
