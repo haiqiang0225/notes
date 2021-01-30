@@ -2,8 +2,8 @@
 # 1.AQS简介
 > *本文源码基于JDK8*。因为本人水平有限，错误和不足之处在所难免，欢迎指出错误和不足之处，一起进步。
 
-首先从大局上介绍一下AQS和一些相关的知识，这部分对后面阅读源码有帮助，熟悉这些概念的同学可以大致浏览一遍，有关MCS锁和CLH锁的部分可以直接跳过选择不看。
-**AbstractQuenedSynchronizer**，简称AQS。从名字就能看出AQS是一个**_抽象的_**、***基于队列***的同步器，这里的抽象的并不是说AQS是由abstract关键字修饰的，而是因为AQS是不能直接拿来用的，需要我们实现一些方法才能使用。AQS本身是作为框架使用的，juc（java.util.concurrent）包中很多同步工具比如ReentrantLock、CountDownLatch、Semphore、ReentrantReadWriteLock、FutureTask等类都是基于AQS来实现的，这几个工具都有作为同步工具的AQS的子类```Sync extends AbstractQueuedSynchronizer```。AQS提供了对内部资源state的原子性管理以及对线程调度的管理。
+  首先从大局上介绍一下AQS和一些相关的知识，这部分对后面阅读源码有帮助，熟悉这些概念的同学可以大致浏览一遍，有关MCS锁和CLH锁的部分可以直接跳过选择不看。
+  **AbstractQuenedSynchronizer**，简称AQS。从名字就能看出AQS是一个**_抽象的_**、***基于队列***的同步器，这里的抽象的并不是说AQS是由abstract关键字修饰的，而是因为AQS是不能直接拿来用的，需要我们实现一些方法才能使用。AQS本身是作为框架使用的，juc（java.util.concurrent）包中很多同步工具比如ReentrantLock、CountDownLatch、Semphore、ReentrantReadWriteLock、FutureTask等类都是基于AQS来实现的，这几个工具都有作为同步工具的AQS的子类```Sync extends AbstractQueuedSynchronizer```。AQS提供了对内部资源state的原子性管理以及对线程调度的管理。
 AQS内部主要有一个**变量state、一个严格FIFO的CLH队列、内部类Node**和**ConditionObject**。
 
 1. **volatile的变量state**：该变量可以抽象的理解为资源的数量，比如在ReentrantLock中该变量就可以表示为是否获得锁以及获得锁的次数。AQS提供了三种方式来修改state的值，```protected final int getState()```、```protected final void setState(int newState)```、```protected final boolean compareAndSetState(int expect, int update) ```，子类可以直接调用这三个方法但不能重写这三个方法。
@@ -146,9 +146,9 @@ static final class Node {
 |nextWaiter|当节点位于同步队列中时，nextWaiter用于标识线程是共享<br />当节点位于阻塞队列时，nextWaiter用于保存下一个节点的引用|
 
 ## 1.2内部类ConditionObject
-```ConditionObject```实现了```java.util.concurrent.locks.Condition```接口,提供了类似Object类的wait和notify（java管程）类似的api。ConditionObject**只能在独占模式下使用**。与Object类的wait/notify相似，**Condition需要与锁一起使用**，在调用```Condition#await```和```Condition#signal```（以及对应的其它版本的api，比如带超时时间的await）之前需要先获得锁，否则会抛出```IllegalMonitorStateException```。一个锁可以与多个```ConditionObject```绑定，这是AQS比Java自带的wait/notify更加强大的地方，Java自带的api只能实现一个监视器锁对应一个condition。
+  ```ConditionObject```实现了```java.util.concurrent.locks.Condition```接口,提供了类似Object类的wait和notify（java管程）类似的api。ConditionObject**只能在独占模式下使用**。与Object类的wait/notify相似，**Condition需要与锁一起使用**，在调用```Condition#await```和```Condition#signal```（以及对应的其它版本的api，比如带超时时间的await）之前需要先获得锁，否则会抛出```IllegalMonitorStateException```。一个锁可以与多个```ConditionObject```绑定，这是AQS比Java自带的wait/notify更加强大的地方，Java自带的api只能实现一个监视器锁对应一个condition。
 
-调用```ConditionObject#await```的线程会被封装为Node实例添加到等待队列中，当线程被唤醒或者被中断时会被移到同步队列上。因为是通过```LockSupport.park```来实现等待时阻塞的，因此线程被唤醒可能是因为调用了```LockSupport#unpark```或者```Thread#interrupt```方法。如果线程是在被```signal```方法唤醒之前中断的话，根据ConditionObject的逻辑会抛出```InterruptedException```，而如果线程是在被```signal```方法唤醒之后被中断的话，则不会抛出异常，只是重新设置线程的中断标志为true。在这里可以先不用管具体如何实现的，在清楚的了解了AQS独占模式下工作的流程后再看对应的实现会事半功倍，因为节点从等待队列转移到同步队列以及之后在同步队列中调度的过程和独占模式下AQS中调度过程是完全相同的。
+  调用```ConditionObject#await```的线程会被封装为Node实例添加到等待队列中，当线程被唤醒或者被中断时会被移到同步队列上。因为是通过```LockSupport.park```来实现等待时阻塞的，因此线程被唤醒可能是因为调用了```LockSupport#unpark```或者```Thread#interrupt```方法。如果线程是在被```signal```方法唤醒之前中断的话，根据ConditionObject的逻辑会抛出```InterruptedException```，而如果线程是在被```signal```方法唤醒之后被中断的话，则不会抛出异常，只是重新设置线程的中断标志为true。在这里可以先不用管具体如何实现的，在清楚的了解了AQS独占模式下工作的流程后再看对应的实现会事半功倍，因为节点从等待队列转移到同步队列以及之后在同步队列中调度的过程和独占模式下AQS中调度过程是完全相同的。
 
 # 2.AQS的使用
 当我们使用AQS构建同步工具时，需要重写以下方法：
@@ -162,13 +162,45 @@ static final class Node {
     - ```protected boolean tryReleaseShared(int arg) ```
     
 
-AQS源码中这几个方法默认是直接抛出异常的```throw new UnsupportedOperationException()```，没有把它们定义成abstract方法而是直接抛异常的原因可能是因为我们使用AQS时一般只会使用独占模式或者共享模式，而如果把这些方法都定义为abstract方法的话，我们在使用AQS构建同步工具的时候就需要把这几个方法都实现，所以不如直接抛异常。
+  AQS源码中这几个方法默认是直接抛出异常的```throw new UnsupportedOperationException()```，没有把它们定义成abstract方法而是直接抛异常的原因可能是因为我们使用AQS时一般只会使用独占模式或者共享模式，而如果把这些方法都定义为abstract方法的话，我们在使用AQS构建同步工具的时候就需要把这几个方法都实现，所以不如直接抛异常。
 
 # 3.AQS源码
+这部分如果看着很乱摸不着头脑或者有的地方不明白的话，不必深究，多看几遍，对AQS整体有一定的掌握后就会明白的。因为AQS确实有一点复杂（或者说有很多不大好想的细节）。
+## 3.1acquire
+```acquire(int arg)```为独占模式下获取资源的顶级入口，arg为获取资源的数量。
+```java
+public final void acquire(int arg) {
+        if (!tryAcquire(arg) &&
+            acquireQueued(addWaiter(Node.EXCLUSIVE), arg))
+            selfInterrupt();
+    }
+```
+如果```tryAcquire(arg)```获取资源成功的话，会直接返回，否则的话才会去执行```addWaiter(Node.EXCLUSIVE), arg)```以及之后的```acquireQueued```方法。  
+```addWaiter(Node.EXCLUSIVE), arg)```这个方法的作用是把线程封装为内部类Node的**独占模式**的实例，并且把该实例添加到同步队列中，代码如下
 
-AQS中有几个通用的方法，先在这里看一下这几个方法。
+```java
+private Node addWaiter(Node mode) {
+        Node node = new Node(Thread.currentThread(), mode);
+        // Try the fast path of enq; backup to full enq on failure
+        Node pred = tail;
+        //tail不为null则尝试将node添加到同步队列
+        if (pred != null) {
+            node.prev = pred;
+            //仍然是使用CAS的方式原子性的修改tail，保证只有一个线程能成功修改tail
+            if (compareAndSetTail(pred, node)) {
+                pred.next = node;
+                return node;
+            }
+        }
+        //如果上面快速入队失败则进入正常的入队流程
+        enq(node);
+        return node;
+    }
+```
+addWaiter方法其实就是```enq(Node node)```的快速版本，“Try the fast path of enq; backup to full enq on failure”这句注释可能是因为直接调用``` enq(node)```的话可能多了’很多‘工作，所以在addWaiter方法中先尝试直接入队，失败了再进入```enq(node)```方法中入队。
 
-1. 内部类Node实例入队的方法```enq(final Node node) ```
+```enq(Node node)```方法如下：
+
 ```java
 private Node enq(final Node node) {
         for (;;) {
@@ -189,38 +221,97 @@ private Node enq(final Node node) {
         }
     }
 ```
-这个方法中需要注意的是，当同步队列为空时（t == null的话，同步队列一定为空），需要先构建一个头节点，构建的这个头节点是没有封装线程的（因为成为头节点的节点是否封装线程已经没有意义了，这里可以先不用深究），并且成功构建头节点的线程并不会从该方法中返回，而是进入下一个循环执行else对应的代码，尝试把自己的node添加到同步队列中。
+可以看出else代码块中的逻辑其实就是addWaiter方法中快速入队的逻辑。
 
-总结：enq(final Node node)方法提供了原子性的入队功能。
+  这个方法中需要注意的是，当同步队列为空时（t == null的话，同步队列一定为空），需要先构建一个头节点，构建的这个头节点是没有封装线程的（因为成为头节点的节点是否封装线程已经没有意义了），并且成功构建头节点的线程并不会从该方法中返回，而是进入下一个循环执行else对应的代码，尝试把自己的node添加到同步队列中。
 
-## 3.1acquire
-```acquire(int arg)```为独占模式下获取资源的顶级入口，arg为获取资源的数量。
+至此，```addWaiter(Node.EXCLUSIVE), arg)```执行完毕，线程已经成功的被封装为Node实例并加入到了同步队列，那么接下来的工作就是如何参与调度了，也就是执行``` acquireQueued(addWaiter(Node.EXCLUSIVE), arg)```，这个方法就是获取资源失败的线程参与调度的主要方法，代码如下：
+
 ```java
-public final void acquire(int arg) {
-        if (!tryAcquire(arg) &&
-            acquireQueued(addWaiter(Node.EXCLUSIVE), arg))
-            selfInterrupt();
-    }
-```
-如果```tryAcquire(arg)```获取资源成功的话，会直接返回，否则的话执行```addWaiter(Node.EXCLUSIVE), arg)```。  
-```addWaiter(Node.EXCLUSIVE), arg)```这个方法的作用是把线程封装为内部类Node的实例，并且把该实例添加到同步队列中，代码如下
-```java
-private Node addWaiter(Node mode) {
-        Node node = new Node(Thread.currentThread(), mode);
-        // Try the fast path of enq; backup to full enq on failure
-        Node pred = tail;
-        if (pred != null) {
-            node.prev = pred;
-            if (compareAndSetTail(pred, node)) {
-                pred.next = node;
-                return node;
+final boolean acquireQueued(final Node node, int arg) {
+        boolean failed = true;
+        try {
+            //中断标记，从这里也能看出acquire是不响应中断的
+            boolean interrupted = false;
+            for (;;) {
+                final Node p = node.predecessor();
+                //只有头节点的第一个后继节点会执行tryAcquire来尝试获得资源，符合CLH同步队列FIFO的特性，其余节点会直接跳过这个if
+                if (p == head && tryAcquire(arg)) {
+                    setHead(node);
+                    p.next = null; // help GC
+                    failed = false;
+                    return interrupted;
+                }
+                //先判断是否可以park阻塞自己了，不能park的话会直接进入下一个循环
+                if (shouldParkAfterFailedAcquire(p, node) &&
+                    parkAndCheckInterrupt())
+                    interrupted = true;
             }
+        } finally {
+            if (failed)
+                cancelAcquire(node);
         }
-        enq(node);
-        return node;
     }
 ```
+从代码中可以看出：
+
+1. 独占模式下**只有**当节点的前驱为头节点时，线程才会执行tryAcquire来获取资源，获取成功后会把自己设置为头节点，失败的话就和其它节点一样，继续循环参与调度。setHead方法的源码很简单，就是直接设置```head = node;```（并且设置头结点的thread引用和prev引用为null，来帮助GC回收没用的节点），因为只有一个线程（tryAcquire成功的那个线程，在这个线程执行release释放资源之前，独占模式下其它线程是不可能执行到setHead这里的）会执行到该方法，所以该方法是不需要进行同步的，也不需要使用CAS的方式来设置头节点。
+2. 所有不能获取资源（不是头节点的直接后继或者虽然是直接后继但是tryAcquire没能成功）的节点，都会执行```shouldParkAfterFailedAcquire```方法，判断获取资源失败后是否可以park阻塞自己，这个代码逻辑也很简单，就是只有直接有效前驱的waitStatus为SIGNAL时，线程才能park自己，否则线程不能park自己（这是因为只有当前节点的ws为SIGNAL时，执行release时才会唤醒后继节点，否则的话是不会去唤醒后继节点的，因此需要把前驱的ws设为SIGNAL）。
+```java
+private static boolean shouldParkAfterFailedAcquire(Node pred, Node node) {
+        int ws = pred.waitStatus;
+        //如果直接前驱的waitStatus已经为SIGNAL，则返回true，表示线程可以直接park自己了
+        if (ws == Node.SIGNAL)
+            /*
+             * This node has already set status asking a release
+             * to signal it, so it can safely park.
+             */
+            return true;
+        //前驱已经被取消，需要跳过所有被取消的前驱，找到一个有效的直接前驱，这种情况下显然线程不可以park自己
+        if (ws > 0) {
+            /*
+             * Predecessor was cancelled. Skip over predecessors and
+             * indicate retry.
+             */
+            do {
+                node.prev = pred = pred.prev;
+            } while (pred.waitStatus > 0);
+            pred.next = node;
+        } else {
+            /*
+             * waitStatus must be 0 or PROPAGATE.  Indicate that we
+             * need a signal, but don't park yet.  Caller will need to
+             * retry to make sure it cannot acquire before parking.
+             */
+            //执行到这里，前驱的waitStatus只能为0或者PROPAGETE了，这两种情况下，我们都应该把前驱的ws设置为SIGNAL
+            //其中PROPAGATE是共享模式下的状态，表示唤醒需要无条件传播，这里不用深究
+            //独占模式下执行到这里，直接前驱的ws只能为0
+            compareAndSetWaitStatus(pred, ws, Node.SIGNAL);
+        }
+        return false;
+    }
+```
+这里节点的直接前驱ws为0有两种可能：
+1. 前驱节点是初始状态，ws默认为0
+2. 前驱节点为SIGNAL或PROPAGATE，但是执行```unparkSuccessor(Node node)```方法时被设置为了0
+第一种情况下，线程理论上来说可以park自己了，因为这时候下次循环很大概率是获取不到资源的（典型的例子就是这个节点不是头节点的直接后继或者同步队列本身已经很长），但是第2种情况下，当前节点的直接前驱肯定是头节点且资源已经释放了（已经执行tryRelease成功了），当前线程已经可以tryAcquire成功了，因此不必阻塞，直接进入下一次循环。因为我们没有办法区分是因为第一种原因导致ws为0还是第二种原因导致的，所以没办法只让第一种情况的线程阻塞，让第二种情况的线程不阻塞，因此选择不直接阻塞线程。这里应该是一种优化，因为第一种情况下的线程很快就会再次执行到这个方法，之后会阻塞自己，避免了重复阻塞唤醒线程。
+到这里，如果线程可以park自己了，就执行```parkAndCheckInterrupt()```方法，代码如下：
+```java
+private final boolean parkAndCheckInterrupt() {
+        LockSupport.park(this);
+        return Thread.interrupted();
+    }
+```
+代码很简单，就是阻塞自己，被唤醒后返回中断标记。
+最后，在acquireQueued中成功获取资源后返回中断标志，如果在排队的过程中线程被中断过，```acquire```方法就就将中断补上```selfInterrupt();```，该方法就一条语句```Thread.currentThread().interrupt()```。
+
+到这里，正常```acquire```方法就结束了，另外如果在排队调度的过程中发生异常的话，是会执行```cancelAcquire(node)```取消节点调度的。正常情况下如果我们重写的```tryAcquire```方法不会出现异常的话，这里是不会发生取消节点的情况的。
+
+总结一下acquire的流程大致如下：
+
+[![ykeND0.png](https://s3.ax1x.com/2021/01/30/ykeND0.png)](https://imgchr.com/i/ykeND0)
 
 ## 3.2release
+
 ## 3.3acquireShared
 ## 3.4releaseShared
