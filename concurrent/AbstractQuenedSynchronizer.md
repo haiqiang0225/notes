@@ -1,6 +1,8 @@
 [TOC]
 # 1.AQS简介
 > *本文源码基于JDK8*。因为本人水平有限，错误和不足之处在所难免，欢迎指出错误和不足之处，一起进步。
+>
+> *这篇文章比较长，涉及到AQS的都放在这篇博客里了，暂时不打算看的部分可以直接跳过。*
 
   首先从大局上介绍一下AQS和一些相关的知识，这部分对后面阅读源码有帮助，熟悉这些概念的同学可以大致浏览一遍，有关MCS锁和CLH锁的部分可以直接跳过选择不看。
   **AbstractQuenedSynchronizer**，简称AQS。从名字就能看出AQS是一个**_抽象的_**、***基于队列***的同步器，这里的抽象的并不是说AQS是由abstract关键字修饰的，而是因为AQS是不能直接拿来用的，需要我们实现一些方法才能使用。AQS本身是作为框架使用的，juc（java.util.concurrent）包中很多同步工具比如ReentrantLock、CountDownLatch、Semphore、ReentrantReadWriteLock、FutureTask等类都是基于AQS来实现的，这几个工具都有作为同步工具的AQS的子类```Sync extends AbstractQueuedSynchronizer```。AQS提供了对内部资源state的原子性管理以及对线程调度的管理。
@@ -141,8 +143,8 @@ static final class Node {
 | 属性 |描述|
 |:---:|:----|
 |waitStatus|表示了当前节点的状态，总共有5种状态。<br />  1. 0值，代表初始状态或者中间状态<br />  2. SIGNAL，代表当前节点需要在释放资源后唤醒一个后继节点来获取资源<br />  3. CONDITION，代表节点此时在等待队列中而不在同步队列中<br />  4. PROPAGATE，代表下一个acquireShared应该无条件传播，在```shouldParkAfterFailedAcquire```方法中体现<br />  5. CANCELLED， 代表当前节点已经被取消，此状态是唯一一个大于0的状态|
-|prev|前驱节点的引用，prev是通过CAS的方式来原子性的插入链表的|
-|next|后驱节点的引用，next的设置并非原子性的，仅作为一种优化手段，如果一个节点的next字段为null，并不一定表示该节点没有后继节点了，总是可以通过prev来向前访问，查看是否有有效后继节点|
+|prev|前驱节点的引用，prev是通过CAS的方式来**原子性**的插入链表的|
+|next|后驱节点的引用，next的设置并非原子性的，**仅作为一种优化手段**，如果一个节点的next字段为null，并不一定表示该节点没有后继节点了，总是可以通过prev来向前访问，查看是否有有效后继节点（这里如果有疑问的话暂时不用深究，看到源码就明白了）|
 |nextWaiter|当节点位于同步队列中时，nextWaiter用于标识线程是共享<br />当节点位于阻塞队列时，nextWaiter用于保存下一个节点的引用|
 
 ## 1.2内部类ConditionObject
@@ -153,13 +155,13 @@ static final class Node {
 # 2.AQS的使用
 当我们使用AQS构建同步工具时，需要重写以下方法：
 1. 独占模式下需要重写：
-    - ```protected boolean tryAcquire(int arg)```
-    - ```protected boolean tryRelease(int arg)```
-    - ```protected boolean isHeldExclusively()```这个方法只有需要用到Condition的时候才需要重写
+    - ```protected boolean tryAcquire(int arg)```,获取资源成功则返回true，否则返回false
+    - ```protected boolean tryRelease(int arg)```，释放资源成功返回true，否则返回false
+    - ```protected boolean isHeldExclusively()```这个方法只有需要用到Condition的时候才需要重写，如果当前线程已经获得锁返回true，否则返回false
 2. 共享模式下需要重写：
-    - ```protected int tryAcquireShared(int arg)```
+    - ```protected int tryAcquireShared(int arg)```，返回值为本次获取成功之后仍剩余的资源数目
     
-    - ```protected boolean tryReleaseShared(int arg) ```
+    - ```protected boolean tryReleaseShared(int arg) ```，释放资源成功返回true，否则返回false
     
 
   AQS源码中这几个方法默认是直接抛出异常的```throw new UnsupportedOperationException()```，没有把它们定义成abstract方法而是直接抛异常的原因可能是因为我们使用AQS时一般只会使用独占模式或者共享模式，而如果把这些方法都定义为abstract方法的话，我们在使用AQS构建同步工具的时候就需要把这几个方法都实现，所以不如直接抛异常。
@@ -303,9 +305,9 @@ private final boolean parkAndCheckInterrupt() {
     }
 ```
 代码很简单，就是阻塞自己，被唤醒后返回中断标记。
-最后，在acquireQueued中成功获取资源后返回中断标志，如果在排队的过程中线程被中断过，```acquire```方法就就将中断补上```selfInterrupt();```，该方法就一条语句```Thread.currentThread().interrupt()```。
+最后，在acquireQueued中成功获取资源后返回中断标志，如果在排队的过程中线程被中断过，```acquire```方法就就将中断补上```selfInterrupt();```，该方法就一条语句```Thread.currentThread().interrupt()```。**acquire方法是不响应中断的**。
 
-到这里，正常```acquire```方法就结束了，另外如果在排队调度的过程中发生异常的话，是会执行```cancelAcquire(node)```取消节点调度的。正常情况下如果我们重写的```tryAcquire```方法不会出现异常的话，这里是不会发生取消节点的情况的。
+到这里，正常```acquire```方法就结束了，另外如果在排队调度的过程中发生异常的话，是会执行```cancelAcquire(node)```取消节点调度的。正常情况下如果我们重写的```tryAcquire```方法不会出现异常的话，是不会发生取消节点的情况的。
 
 总结一下acquire的流程大致如下：
 
@@ -313,5 +315,142 @@ private final boolean parkAndCheckInterrupt() {
 
 ## 3.2release
 
+```	release(int arg)```为独占模式下释放资源的顶层入口，返回值true表示释放资源成功
+
+```java
+public final boolean release(int arg) {
+        if (tryRelease(arg)) {
+            Node h = head;
+            //头节点不为null并且ws为SIGNAL时才会唤醒后继节点
+            //因为shouldParkAfterFailedAcquire方法只有把头节点的ws设为SIGNAL时才会park自己
+            //因此如果head的ws不为SIGNAL的话就无需唤醒后继节点了
+            if (h != null && h.waitStatus != 0)
+                unparkSuccessor(h);
+            return true;
+        }
+        return false;
+    }
+```
+
+释放资源的逻辑仍在在我们重写的```tryRelease(arg)```中，如果执行```tryRelease(arg)```释放资源成功，并且头节点的waitStatus不为0的话，就唤醒后继结点，这里头节点的waitStatus如果不为0，那么就只能是SIGNAL。然后执行```unparkSuccessor(h)```唤醒后继节点来获取资源。
+
+```java
+private void unparkSuccessor(Node node) {
+        /*
+         * If status is negative (i.e., possibly needing signal) try
+         * to clear in anticipation of signalling.  It is OK if this
+         * fails or if status is changed by waiting thread.
+         */
+        int ws = node.waitStatus;
+        //这里把头结点的waitStatus设置为0是一种优化手段，允许失败
+        //那么这里的CAS什么情况下会失败呢？只有第二个节点几乎同时执行了shouldParkAfterFailedAcquire方法，
+        //这时这里的CAS操作就有可能失败，这个时候这里的CAS失败没有影响，因为下一个线程很快就会被设置为头节点
+        if (ws < 0)
+            compareAndSetWaitStatus(node, ws, 0);
+
+        /*
+         * Thread to unpark is held in successor, which is normally
+         * just the next node.  But if cancelled or apparently null,
+         * traverse backwards from tail to find the actual
+         * non-cancelled successor.
+         */
+        //下面的方法就是跳过所有被取消了的节点，找到node的有效直接后继节点，然后唤醒
+        Node s = node.next;
+        //这里为null好像只有一种情况，就是当前节点的后继已经入队了，已经执行到addWaiter方法，并且执行node.prev = pred
+        //和compareAndSetTail(pred, node)成功，这时候这个节点实际上已经入队了，但是pred.next = node这条
+        //语句可能还没有执行，所以node.next为null，其他情况下我没有发现为null的情况。
+        //因为没有一种能同时把prev和next同时原子性的设置的方法，所以next只作为一种优化，很多地方都要从队尾往前遍历
+        if (s == null || s.waitStatus > 0) {
+            s = null;
+            //不论是何种情况，从队尾开始找node的有效直接后继节点
+            for (Node t = tail; t != null && t != node; t = t.prev)
+                if (t.waitStatus <= 0)
+                    s = t;
+        }
+        //如果有直接后继就唤醒，正常情况下都是有的
+        if (s != null)
+            LockSupport.unpark(s.thread);
+    }
+```
+
+被唤醒的线程一般情况会从```parkAndCheckInterrupt()```方法中醒来，然后继续执行``` acquireQueued```中的逻辑，尝试执行```tryAcquire(arg)```（因为释放资源的节点是头节点），正常情况下就会获取资源成功，到这里```release```的流程就结束了。
+
+release的流程比较简单（unparkSuccessor的逻辑上面代码上的注释都很全，这里就没展开，展开反而会使得图更复杂，不够清晰）：
+
+[![yVPJ1I.png](https://s3.ax1x.com/2021/01/31/yVPJ1I.png)](https://imgchr.com/i/yVPJ1I)
+
 ## 3.3acquireShared
+
+```acquireShared```是**共享模式**下获取资源的顶层入口，代码如下：  
+```java
+public final void acquireShared(int arg) {
+        //和acquire一样，只有当无法获取资源的情况下才需要AQS进行调度
+        if (tryAcquireShared(arg) < 0)
+            //入队和调度的逻辑都在该方法里
+            doAcquireShared(arg);
+    }
+```
+```tryAcquireShared```返回值大于0的话，当前线程一定是获取资源成功的，因此直接返回就行了，不需要AQS进行同步调度。```tryAcquireShared```返回0的话，说明刚好把资源消耗光了，下一次获取的线程就需要AQS调度了（不考虑中间有其他线程释放了资源的情况）。真正的加入同步队列以及调度的逻辑都在```doAcquireShared(arg)```中，代码如下：
+
+```java
+private void doAcquireShared(int arg) {
+    //以共享模式创建节点，并将节点添加到同步队列中
+    final Node node = addWaiter(Node.SHARED);
+    //失败标记
+    boolean failed = true;
+    try {
+        //中断标记
+        boolean interrupted = false;
+        for (;;) {
+            final Node p = node.predecessor();
+            if (p == head) {
+                int r = tryAcquireShared(arg);
+                if (r >= 0) {
+                    setHeadAndPropagate(node, r);
+                    p.next = null; // help GC
+                    if (interrupted)
+                        selfInterrupt();
+                    failed = false;
+                    return;
+                }
+            }
+            if (shouldParkAfterFailedAcquire(p, node) &&
+                parkAndCheckInterrupt())
+                interrupted = true;
+        }
+    } finally {
+        if (failed)
+            cancelAcquire(node);
+    }
+}
+```
+可以看出```doAcquireShared```方法与```acquireQueued```十分相似。  
+```doAcquireShared```也是不响应中断的。该方法将需要同步的线程以共享模式添加到同步队列，之后进行同步调度，同步调度的逻辑与```acquireQueued```基本一致，主要不同的地方是```tryAcquireShared(arg)```尝试获取资源成功后的逻辑，代码如下：
+```java
+private void setHeadAndPropagate(Node node, int propagate) {
+        Node h = head; // Record old head for check below
+        setHead(node);
+        /*
+         * Try to signal next queued node if:
+         *   Propagation was indicated by caller,
+         *     or was recorded (as h.waitStatus either before
+         *     or after setHead) by a previous operation
+         *     (note: this uses sign-check of waitStatus because
+         *      PROPAGATE status may transition to SIGNAL.)
+         * and
+         *   The next node is waiting in shared mode,
+         *     or we don't know, because it appears null
+         *
+         * The conservatism in both of these checks may cause
+         * unnecessary wake-ups, but only when there are multiple
+         * racing acquires/releases, so most need signals now or soon
+         * anyway.
+         */
+        if (propagate > 0 || h == null || h.waitStatus < 0 ||
+            (h = head) == null || h.waitStatus < 0) {
+            Node s = node.next;
+            if (s == null || s.isShared())
+                doReleaseShared();
+        }
+```
 ## 3.4releaseShared
