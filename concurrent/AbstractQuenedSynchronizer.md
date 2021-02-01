@@ -403,9 +403,13 @@ private void doAcquireShared(int arg) {
         boolean interrupted = false;
         for (;;) {
             final Node p = node.predecessor();
+            //只有前驱节点为head的节点才会尝试获得资源，所以共享模式下节点仍然是先进先出
             if (p == head) {
+                //尝试获得资源
                 int r = tryAcquireShared(arg);
+                //获得资源成功，可能仍有剩余资源，也可能没有
                 if (r >= 0) {
+                    //设置当前节点为头节点，并且进行传播。这个方法是和acquire区别最大的地方
                     setHeadAndPropagate(node, r);
                     p.next = null; // help GC
                     if (interrupted)
@@ -414,6 +418,7 @@ private void doAcquireShared(int arg) {
                     return;
                 }
             }
+            //线程是否可以park自己的判断逻辑，和acquire中的是同一个方法，因此只有前驱的ws为SIGNAL时才会park自己
             if (shouldParkAfterFailedAcquire(p, node) &&
                 parkAndCheckInterrupt())
                 interrupted = true;
@@ -425,10 +430,13 @@ private void doAcquireShared(int arg) {
 }
 ```
 可以看出```doAcquireShared```方法与```acquireQueued```十分相似。  
-```doAcquireShared```也是不响应中断的。该方法将需要同步的线程以共享模式添加到同步队列，之后进行同步调度，同步调度的逻辑与```acquireQueued```基本一致，主要不同的地方是```tryAcquireShared(arg)```尝试获取资源成功后的逻辑，代码如下：
+```doAcquireShared```也是不响应中断的。该方法将需要同步的线程以共享模式添加到同步队列，之后进行同步调度，同步调度的逻辑与```acquireQueued```基本一致，主要不同的地方是```tryAcquireShared(arg)```尝试获取资源成功后的逻辑，即```setHeadAndPropagate```，代码如下：
+
 ```java
 private void setHeadAndPropagate(Node node, int propagate) {
+        //头节点有可能会改变，因此记录原来的头节点
         Node h = head; // Record old head for check below
+        //设置当前节点为新的头节点
         setHead(node);
         /*
          * Try to signal next queued node if:
@@ -446,6 +454,10 @@ private void setHeadAndPropagate(Node node, int propagate) {
          * racing acquires/releases, so most need signals now or soon
          * anyway.
          */
+        //以下几种情况满足一种就唤醒后继或者设置传播状态
+        //1. propagate > 0，这时仍然还有剩余资源可获取，因此需要无条件传播
+        //2. 原头结点的waitStatus < 0，可能为SIGNAL或者为PROPAGATE
+        //3. 新的头节点的waitStatus < 0，可能为SIGNAL或者为PROPAGATE
         if (propagate > 0 || h == null || h.waitStatus < 0 ||
             (h = head) == null || h.waitStatus < 0) {
             Node s = node.next;
@@ -453,4 +465,6 @@ private void setHeadAndPropagate(Node node, int propagate) {
                 doReleaseShared();
         }
 ```
+```h == null```和```(h = head) == null```在这里是不会成立的，执行到这个方法的话，同步队列肯定不为null，那么```Node h = head```这句代码执行的时候head肯定不为null，而h又保存了head指向的节点的引用，因此对应的实例不可能在这个方法执行时被GC，所以h == null不会判定成功；```(h = head) == null```显然更不可能成立了，因此这里只是防止出现NPE。
+
 ## 3.4releaseShared
