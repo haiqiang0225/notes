@@ -313,8 +313,7 @@ private final boolean parkAndCheckInterrupt() {
 
 [![ykeND0.png](https://s3.ax1x.com/2021/01/30/ykeND0.png)](https://imgchr.com/i/ykeND0)
 
-## 3.2release
-
+## 3.2release和releaseShared
 ```	release(int arg)```为独占模式下释放资源的顶层入口，返回值true表示释放资源成功
 
 ```java
@@ -458,13 +457,84 @@ private void setHeadAndPropagate(Node node, int propagate) {
         //1. propagate > 0，这时仍然还有剩余资源可获取，因此需要无条件传播
         //2. 原头结点的waitStatus < 0，可能为SIGNAL或者为PROPAGATE
         //3. 新的头节点的waitStatus < 0，可能为SIGNAL或者为PROPAGATE
+        //这里有可能产生多余的唤醒，不用深究，往后看
         if (propagate > 0 || h == null || h.waitStatus < 0 ||
             (h = head) == null || h.waitStatus < 0) {
             Node s = node.next;
+            //如果s == null成立，说明有新的节点入队，且还没有设置next指针
             if (s == null || s.isShared())
                 doReleaseShared();
         }
 ```
-```h == null```和```(h = head) == null```在这里是不会成立的，执行到这个方法的话，同步队列肯定不为null，那么```Node h = head```这句代码执行的时候head肯定不为null，而h又保存了head指向的节点的引用，因此对应的实例不可能在这个方法执行时被GC，所以h == null不会判定成功；```(h = head) == null```显然更不可能成立了，因此这里只是防止出现NPE。
+```h == null```和```(h = head) == null```在这里是不会成立的，执行到这个方法的话，同步队列肯定不为空，那么```Node h = head```这句代码执行的时候head肯定不为null，而h又保存了head指向的节点实例的引用，因此对应的实例不可能在这个方法执行时被GC，所以h == null不会判定成功；```(h = head) == null```显然更不可能成立了，因此这里只是防止出现NPE的写法，不用过于纠结这个地方。
 
-## 3.4releaseShared
+这里先看一下```doReleaseShared()```的源码再去讨论这几个情况什么时候会成立。
+
+```doReleaseShared```源码如下：
+
+```java
+private void doReleaseShared() {
+    /*
+     * Ensure that a release propagates, even if there are other
+     * in-progress acquires/releases.  This proceeds in the usual
+     * way of trying to unparkSuccessor of head if it needs
+     * signal. But if it does not, status is set to PROPAGATE to
+     * ensure that upon release, propagation continues.
+     * Additionally, we must loop in case a new node is added
+     * while we are doing this. Also, unlike other uses of
+     * unparkSuccessor, we need to know if CAS to reset status
+     * fails, if so rechecking.
+     */
+    for (;;) {
+        Node h = head;
+        //队列为空或者只有头节点了不需要进行唤醒等操作
+        if (h != null && h != tail) {
+            int ws = h.waitStatus;
+            //头节点的ws为SIGNAL，这个时候需要唤醒后继
+            if (ws == Node.SIGNAL) {
+                //这里需要使用CAS的方式去改变头节点的ws，只有成功的那个线程才能唤醒后继线程
+                //失败线程则进入下一次循环
+                if (!compareAndSetWaitStatus(h, Node.SIGNAL, 0))
+                    continue;            // loop to recheck cases
+                unparkSuccessor(h);
+            }
+            //这里如果头节点的ws等于0，只有可能是因为已经有其它线程唤醒了后继节点
+            //所以这里只是设置头节点的ws为PROPAGATE，保证唤醒能够传播
+            else if (ws == 0 &&
+                     !compareAndSetWaitStatus(h, 0, Node.PROPAGATE))
+                continue;                // loop on failed CAS
+        }
+        //在这里如果头节点改变了的话就继续循环
+        if (h == head)                   // loop if head changed
+            break;
+    }
+}
+```
+首先，能执行到这个方法的话h肯定不为null。h如果和tail相同也就是队列中只有一个节点了，这个时候唤醒后继显然是没意义的。排除这种情况后就可以进入唤醒后继的逻辑了。
+
+当头节点的waitStatus为SIGNAL时，和```acquire```中一样，节点的waitStatus为SIGNAL表示节点需要唤醒后继节点，因此先原子性的清除节点的SIGNAL状态，成功清除的线程负责唤醒后继节点，失败的线程则继续循环。这里的CAS失败只有可能是多个线程在执行```doReleaseShared```。
+
+首先看到修改节点ws的只有	```unparkSuccessor```、```doReleaseShared```、```shouldParkAfterFailedAcquire```这几个方法（不考虑取消节点```cancelAcquire```以及等待队列中的操作，等待队列中的操作在逻辑上是和这几个方法起到一样的作用的），在执行这里的CAS时，显然后继节点不可能在执行```shouldParkAfterFailedAcquire```中的CAS。因为运行到这里时，头节点的ws已经为SIGNAL了，说明后继节点的CAS操作已经执行过了，在这里的CAS成功之前是不会再执行了；```unparkSuccessor```方法中的CAS就更不可能了，因为执行```unparkSuccessor```的一定是CAS的把SIGNAL状态清除的线程。所以，这里CAS失败的原因只有可能是有多个线程在这里发生了竞争。
+
+因为在共享状态下，```acquireShared```和```releaseShared```都会调用```doReleaseShared```方法，这里发生了竞争是因为```acquireShared```流程中成功获得资源的线程在执行```setHeadAndPropagate```时判断需要唤醒后继，所以执行了```doReleaseShared```方法；同时，前面获取资源成功的线程在使用完资源后，执行```releaseShared```方法，释放资源成功后，执行```doReleaseShared```方法，这个时候就发生了竞争。也就是以下两种情况：
+
+1. 执行```setHeadAndPropagate```时，propagate参数大于0，也就是还有资源可以获取；h.waitStatus < 0（旧的头节点）；head.waitStatus < 0（新的头节点）。这里小于0，可能为SIGNAL，也可能为PROPAGATE。
+2. 线程在执行```releaseShared```，调用了```doReleaseShared```方法。  这时候说明又有新的资源可以获取了。
+
+CAS的清除了头节点的SIGNAL状态的线程去唤醒头节点的后继，这个时候头节点的ws就为0了，其它线程在执行的时候就会进入到传播的逻辑，就会CAS的把头节点的ws从0设置为PROPAGATE。头节点的ws被设置为PROPAGATE后，后面的线程执行```setHeadAndPropagate```时```h.waitStatus < 0```就会判定为true，从而再执行```doReleaseShared```方法。也就是说这里把头节点的ws设为PROPAGATE的目的是为了**让后续被唤醒的线程检测到可能又有资源可以获取了，请尝试执行```doReleaseShared```方法来唤醒后继线程**。当旧的头节点h或者新的头节点head的ws为SIGNAL时，逻辑上我认为不需要唤醒后继节点，正如源码里的注释写的，这里可能会产生多余的唤醒。但是产生过多的唤醒并不会产生错误，并且被唤醒的线程是比较靠近头部的节点，很有可能马上就能获得资源了，根据LockSupport的逻辑，提前unpark线程也可以避免线程阻塞。
+
+最后关于```if (h == head)  ```这里的判断，为什么头节点改变了就继续循环呢？因为头节点改变了的话，有可能我们想要传达的信息并没有传达给后继节点（仍然还有资源可以获取，可能是获取完剩余的，也有可能是新释放的，总之是把h的ws设置为了PROPAGATE），因此我们需要继续循环尝试设置新的头节点的状态，将我们的信息传达出去。
+
+到这里共享模式的源码解读就基本完成了，释放资源的方法很简答，代码如下：
+
+```java
+public final boolean releaseShared(int arg) {
+    if (tryReleaseShared(arg)) {
+        doReleaseShared();
+        return true;
+    }
+    return false;
+}
+```
+可以看出,主要逻辑就是```doReleaseShared```,而上面已经解读该方法了,这里不再赘述。
+最后，```acquireShared```和```releaseShared```的流程如下：
