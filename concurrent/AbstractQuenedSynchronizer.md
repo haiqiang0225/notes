@@ -166,6 +166,83 @@ static final class Node {
 
   AQS源码中这几个方法默认是直接抛出异常的```throw new UnsupportedOperationException()```，没有把它们定义成abstract方法而是直接抛异常的原因可能是因为我们使用AQS时一般只会使用独占模式或者共享模式，而如果把这些方法都定义为abstract方法的话，我们在使用AQS构建同步工具的时候就需要把这几个方法都实现，所以不如直接抛异常。
 
+## 2.1使用AQS构建互斥锁（mutex）
+```java
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.AbstractQueuedSynchronizer;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+
+public class Mutex implements Lock {
+
+    private final Sync sync;
+
+    static class Sync extends AbstractQueuedSynchronizer {
+
+        @Override
+        protected boolean tryAcquire(int arg) {
+            if (compareAndSetState(0, 1)) {
+                setExclusiveOwnerThread(Thread.currentThread());
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        protected boolean tryRelease(int arg) {
+            if (getExclusiveOwnerThread() != Thread.currentThread()) {
+                throw new IllegalMonitorStateException();
+            }
+            setState(0);
+            setExclusiveOwnerThread(null);
+            return false;
+        }
+
+        @Override
+        protected boolean isHeldExclusively() {
+            return Thread.currentThread() == getExclusiveOwnerThread();
+        }
+    }
+
+
+    public Mutex() {
+        this.sync = new Sync();
+    }
+
+    @Override
+    public void lock() {
+        sync.acquire(1);
+    }
+
+    @Override
+    public void lockInterruptibly() throws InterruptedException {
+        sync.acquireInterruptibly(1);
+    }
+
+    @Override
+    public boolean tryLock() {
+        return sync.tryAcquire(1);
+    }
+
+    @Override
+    public boolean tryLock(long time, TimeUnit unit) throws InterruptedException {
+        return sync.tryAcquireNanos(1, unit.toNanos(time));
+    }
+
+    @Override
+    public void unlock() {
+
+    }
+
+    @Override
+    public Condition newCondition() {
+        return sync.new ConditionObject();
+    }
+}
+
+```
+
+
 # 3.AQS源码
 这部分如果看着很乱摸不着头脑或者有的地方不明白的话，不必深究，多看几遍，对AQS整体有一定的掌握后就会明白的。因为AQS确实有一点复杂（或者说有很多不大好想的细节）。
 ## 3.1acquire
