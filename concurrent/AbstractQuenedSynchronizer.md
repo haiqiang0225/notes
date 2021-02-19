@@ -231,7 +231,7 @@ public class Mutex implements Lock {
 
     @Override
     public void unlock() {
-
+        sync.release(1);
     }
 
     @Override
@@ -239,6 +239,7 @@ public class Mutex implements Lock {
         return sync.new ConditionObject();
     }
 }
+
 
 ```
 
