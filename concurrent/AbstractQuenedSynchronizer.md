@@ -616,3 +616,6 @@ public final boolean releaseShared(int arg) {
 ```
 可以看出,主要逻辑就是```doReleaseShared```,而上面已经解读该方法了,这里不再赘述。
 最后，```acquireShared```和```releaseShared```的流程如下：
+
+[![yI1BWV.png](https://s3.ax1x.com/2021/02/20/yI1BWV.png)](https://imgchr.com/i/yI1BWV)  
+[![yI1sQU.png](https://s3.ax1x.com/2021/02/20/yI1sQU.png)](https://imgchr.com/i/yI1sQU)
