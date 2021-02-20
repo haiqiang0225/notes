@@ -195,7 +195,7 @@ public class Mutex implements Lock {
             }
             setState(0);
             setExclusiveOwnerThread(null);
-            return false;
+            return true;
         }
 
         @Override
