@@ -391,7 +391,7 @@ private final boolean parkAndCheckInterrupt() {
 
 [![ykeND0.png](https://s3.ax1x.com/2021/01/30/ykeND0.png)](https://imgchr.com/i/ykeND0)
 
-## 3.2release和releaseShared
+## 3.2release
 ```	release(int arg)```为独占模式下释放资源的顶层入口，返回值true表示释放资源成功
 
 ```java
@@ -456,7 +456,7 @@ release的流程比较简单（unparkSuccessor的逻辑上面代码上的注释�
 
 [![yVPJ1I.png](https://s3.ax1x.com/2021/01/31/yVPJ1I.png)](https://imgchr.com/i/yVPJ1I)
 
-## 3.3acquireShared
+## 3.3acquireShared和releaseShared
 
 ```acquireShared```是**共享模式**下获取资源的顶层入口，代码如下：  
 ```java
