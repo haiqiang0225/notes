@@ -13,6 +13,8 @@
 
 下面的例子模拟了十个子线程加载某些资源，主线程等待子线程加载，只有子线程全部加载完毕后，主线程才可以继续运行。
 
+我们打游戏时等待加载就是这样的情况，当然了，游戏里的实现和这里的是不一样的，这里只是简单的介绍```CountDownLatch```的使用。
+
 ```java
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
