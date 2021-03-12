@@ -249,24 +249,270 @@ public class RRWLockDemo3 {
 
 ### Sync源码分析
 
-内部类```Sync```继承了```AbstractQueuedSynchronizer```，AQS的```state```变量被划分成了两部分，其中高16位表示共享锁（读锁）占有的数量，低16位表示排它锁（写锁）占有的数量。下面是```Sync```中的成员变量。
+内部类```Sync```继承了```AbstractQueuedSynchronizer```，AQS的```state```变量被划分成了两部分，其中<u>高16位</u>表示共享锁（读锁）占有的数量，<u>低16位</u>表示排它锁（写锁）占有的数量。下面是```Sync```中的成员变量。
 
 ```java
-//共享锁的偏移数，Java里int为32位，这里把int型的state分为了高16位和低16位两部分
+// 共享锁的偏移数，Java里int为32位，这里把int型的state分为了高16位和低16位两部分
 static final int SHARED_SHIFT   = 16;
-//二进制：00000000 00000001 00000000 00000000
+// 二进制：00000000 00000001 00000000 00000000
 static final int SHARED_UNIT    = (1 << SHARED_SHIFT);
-//最大值显然是16位全1，从上面SHARED_UNIT的二进制不难看出，SHARED_UNIT-1就是最大值
+// 最大值显然是16位全1，从上面SHARED_UNIT的二进制不难看出，SHARED_UNIT-1就是最大值
 static final int MAX_COUNT      = (1 << SHARED_SHIFT) - 1;
-//用来从state中取出独占锁的占有数量
-//二进制：00000000 00000000 11111111 11111111
-//显然只要用state与EXCLUSIVE_MASK执行按位与操作就能得到独占锁的占有数量
+// 用来从state中取出独占锁的占有数量
+// 二进制：00000000 00000000 11111111 11111111
+// 显然只要用state与EXCLUSIVE_MASK执行按位与操作就能得到独占锁的占有数量
 static final int EXCLUSIVE_MASK = (1 << SHARED_SHIFT) - 1;
 
-//下面两个Api分别用来获得共享锁和独占锁的数量
+// 下面两个Api分别用来获得共享锁和独占锁的数量
 /** Returns the number of shared holds represented in count  */
 static int sharedCount(int c)    { return c >>> SHARED_SHIFT; }
 /** Returns the number of exclusive holds represented in count  */
 static int exclusiveCount(int c) { return c & EXCLUSIVE_MASK; }
+```
+
+tryAcquire方法：
+
+```java
+protected final boolean tryAcquire(int acquires) {
+    /*
+     * Walkthrough:
+     * 1. If read count nonzero or write count nonzero
+     *    and owner is a different thread, fail.
+     * 2. If count would saturate, fail. (This can only
+     *    happen if count is already nonzero.)
+     * 3. Otherwise, this thread is eligible for lock if
+     *    it is either a reentrant acquire or
+     *    queue policy allows it. If so, update state
+     *    and set owner.
+     */
+    Thread current = Thread.currentThread();
+    int c = getState();
+    int w = exclusiveCount(c);
+    if (c != 0) {
+        // (Note: if c != 0 and w == 0 then shared count != 0)
+        // state !=0 说明state的二进制不全为0，而独占部分的计数为0
+        // 说明共享部分的计数不为0，这种情况显然不能获得独占锁，返回false
+        // 另一种情况就是共享部分和独占部分的计数均不为0，这种情况就是
+        // 已经获得写锁的线程又申请了写锁，所以这里要判断一下申请的线程
+        // 是不是已经获得了锁的线程，不是的话也返回false
+        if (w == 0 || current != getExclusiveOwnerThread())
+            return false;
+        // 获得写锁的数量已经超过了16位的最大值，抛出错误
+        if (w + exclusiveCount(acquires) > MAX_COUNT)
+            throw new Error("Maximum lock count exceeded");
+        // Reentrant acquire
+        // 能执行到这里说明独占部分和共享部分的计数都不为0，并且当前线程是
+        // 已经获得了写锁的线程，再次获得写锁就是重入的逻辑了，设置state
+        // 后返回true
+        setState(c + acquires);
+        return true;
+    }
+    // 运行到这里，说明 c == 0，独占部分和共享部分均为0，也就是说前面获取state的
+    // 时候是没有线程获得读锁/写锁的，但是这和是否有线程在AQS中排队获得锁是没有关系的
+    // 所以这里就涉及到是非公平锁还是公平锁的问题了，writerShouldBlock()实现了公平
+    // 还是非公平锁。在非公平锁的实现中是直接返回false，而在公平锁的实现中是返回AQS中
+    // 是否有线程在排队，这和ReentrantLock中的逻辑是一样的。
+    // 简单来说，如果是非公平锁的话，会直接尝试CAS的修改state的值
+    // 如果是公平锁的话，则是会先判断是否有线程在AQS中排队，如果有的话，自己也进入AQS排队
+    // 如果没有的话才尝试CAS的修改state
+    if (writerShouldBlock() ||
+        !compareAndSetState(c, c + acquires))
+        return false;
+    // 执行到这里，当前线程成功获得写锁
+    setExclusiveOwnerThread(current);
+    return true;
+}
+```
+
+tryRelease：
+
+```java
+protected final boolean tryRelease(int releases) {
+    if (!isHeldExclusively())
+        throw new IllegalMonitorStateException();
+    int nextc = getState() - releases;
+    boolean free = exclusiveCount(nextc) == 0;
+    if (free)
+        setExclusiveOwnerThread(null);
+    // 因为是独占模式，所以并不需要并发控制，直接改就完了
+    setState(nextc);
+    return free;
+}
+```
+
+tryAcquireShared：
+
+```java
+protected final int tryAcquireShared(int unused) {
+    /*
+     * Walkthrough:
+     * 1. If write lock held by another thread, fail.
+     * 2. Otherwise, this thread is eligible for
+     *    lock wrt state, so ask if it should block
+     *    because of queue policy. If not, try
+     *    to grant by CASing state and updating count.
+     *    Note that step does not check for reentrant
+     *    acquires, which is postponed to full version
+     *    to avoid having to check hold count in
+     *    the more typical non-reentrant case.
+     * 3. If step 2 fails either because thread
+     *    apparently not eligible or CAS fails or count
+     *    saturated, chain to version with full retry loop.
+     */
+    Thread current = Thread.currentThread();
+    int c = getState();
+    // 有写锁并且写锁不是被当前线程持有的情况下不能获得读锁
+    // 不论公平模式还是非公平模式，这种情况下都是不能获得读锁的
+    if (exclusiveCount(c) != 0 &&
+        getExclusiveOwnerThread() != current)
+        return -1;
+    int r = sharedCount(c);
+    // 1.先判断获得读锁的操作是否需要阻塞，这里也是有公平和非公平两种模式
+    // 公平模式下会看一下AQS中是否有线程在排队，是的话返回true
+    // 非公平模式和写锁直接返回false不需要阻塞不一样，会先判断一下AQS中排队
+    // 的第一个线程是否是独占模式即等待写锁，是的话这次读锁要阻塞，这是为了
+    // 在一定程度上防止等待获取写锁的线程饥饿
+    // 2.如果获取读锁的操作不需要阻塞，在确保共享部分的计数不会溢出的情况下
+    // 执行CAS来获取读锁
+    if (!readerShouldBlock() &&
+        r < MAX_COUNT &&
+        // c + SHARED_UNIT 相当于共享部分的计数加1
+        // SHARED_UNIT的二进制：00000000 00000001 00000000 00000000
+        compareAndSetState(c, c + SHARED_UNIT)) {
+        // 执行到这里线程已经成功获取读锁了
+        // 如果之前共享部分的计数为0，说明是第一次获得读锁
+        if (r == 0) {
+            firstReader = current;
+            firstReaderHoldCount = 1;
+        } else if (firstReader == current) { 
+            firstReaderHoldCount++;
+        } else {
+            // cachedHoldCounter作为一种优化，可以节省线程到ThreadLocalMap
+            // 中查找holdCounter的开销
+            HoldCounter rh = cachedHoldCounter;
+            // cachedHoldCounter为空或者虽不为空，但缓存的并不是本线程的HoldCounter
+            if (rh == null || rh.tid != getThreadId(current))
+                // 从ThreadLocalMap中找到HoldCounter并缓存
+                cachedHoldCounter = rh = readHolds.get();
+            // 满足以下情况：
+            // 1.cachedHoldCounter不为空且是缓存的是本线程的HoldCounter
+            // 2.cachedHoldCounter的count为0，说明是第一次获得读锁
+            else if (rh.count == 0)
+                // 第一次获得读锁需要把HoldCounter的实例保存到线程绑定的readHolds中
+                readHolds.set(rh);
+            // 本线程持有的读锁计数加一
+            rh.count++;
+        }
+        // 获取成功
+        return 1;
+    }
+    // 如果执行下面的方法，有以下几种情况
+    // 1. readerShouldBlock()返回了true，该次获得读锁的操作应该阻塞
+    // 2. 共享部分的计数大于等于MAX_COUNT了
+    // 3. 发生了竞争，导致该线程执行CAS失败
+    return fullTryAcquireShared(current);
+}
+```
+
+fullTryAcquireShared：
+
+```java
+final int fullTryAcquireShared(Thread current) {
+    /*
+     * This code is in part redundant with that in
+     * tryAcquireShared but is simpler overall by not
+     * complicating tryAcquireShared with interactions between
+     * retries and lazily reading hold counts.
+     */
+    HoldCounter rh = null;
+    for (;;) {
+        int c = getState();
+        // 写锁计数不为0且写锁不是当前线程持有，获取失败
+        if (exclusiveCount(c) != 0) {
+            // 如果这个if判定失败了，说明独占锁是被当前线程持有的
+            // 如果这里阻塞线程的话，就会造成死锁，并且也失去了可重入的语义
+            if (getExclusiveOwnerThread() != current)
+                return -1;
+            // else we hold the exclusive lock; blocking here
+            // would cause deadlock.
+            
+        // 执行到这里，说明上面获取state的时刻是没有独占锁的，至于需不需要阻塞
+        // 线程，需要看具体实现了，也就是前面的公平和非公平模式
+        } else if (readerShouldBlock()) {
+            // Make sure we're not acquiring read lock reentrantly
+            if (firstReader == current) {
+                // assert firstReaderHoldCount > 0;
+            } else {
+                if (rh == null) {
+                    rh = cachedHoldCounter;
+                    if (rh == null || rh.tid != getThreadId(current)) {
+                        rh = readHolds.get();
+                        if (rh.count == 0)
+                            readHolds.remove();
+                    }
+                }
+                if (rh.count == 0)
+                    return -1;
+            }
+        }
+        // 共享部分的计数已经达到最大值了，再次获取就会溢出
+        if (sharedCount(c) == MAX_COUNT)
+            throw new Error("Maximum lock count exceeded");
+        // 跟tryAcquireShared方法中获取成功的逻辑相同
+        if (compareAndSetState(c, c + SHARED_UNIT)) {
+            if (sharedCount(c) == 0) {
+                firstReader = current;
+                firstReaderHoldCount = 1;
+            } else if (firstReader == current) {
+                firstReaderHoldCount++;
+            } else {
+                if (rh == null)
+                    rh = cachedHoldCounter;
+                if (rh == null || rh.tid != getThreadId(current))
+                    rh = readHolds.get();
+                else if (rh.count == 0)
+                    readHolds.set(rh);
+                rh.count++;
+                cachedHoldCounter = rh; // cache for release
+            }
+            return 1;
+        }
+    }
+}
+```
+
+tryReleaseShared：
+
+```java
+protected final boolean tryReleaseShared(int unused) {
+    Thread current = Thread.currentThread();
+    if (firstReader == current) {
+        // assert firstReaderHoldCount > 0;
+        if (firstReaderHoldCount == 1)
+            firstReader = null;
+        else
+            firstReaderHoldCount--;
+    } else {
+        HoldCounter rh = cachedHoldCounter;
+        if (rh == null || rh.tid != getThreadId(current))
+            rh = readHolds.get();
+        int count = rh.count;
+        if (count <= 1) {
+            readHolds.remove();
+            if (count <= 0)
+                throw unmatchedUnlockException();
+        }
+        --rh.count;
+    }
+    for (;;) {
+        int c = getState();
+        int nextc = c - SHARED_UNIT;
+        if (compareAndSetState(c, nextc))
+            // Releasing the read lock has no effect on readers,
+            // but it may allow waiting writers to proceed if
+            // both read and write locks are now free.
+            return nextc == 0;
+    }
+}
 ```
 
