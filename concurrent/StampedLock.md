@@ -276,6 +276,8 @@ private transient int readerOverflow;
 
 ### 写锁源码
 
+#### 获取写锁源码
+
 写锁的顶级入口为```writeLock()、tryWriteLock()、tryWriteLock(long time, TimeUnit unit)```，其中```tryWriteLock()```系列跟其它锁实现一样，判断完锁状态后如果允许获得锁就尝试CAS的获取锁，如果最终获取失败（有可能是超时），直接返回而不会排队。而```writeLock()```失败后会进入同步队列排队，排队的代码是最复杂的一部分，所以我们从```writeLock()```的源码看起，看完了```writeLock()```的源码后，其余try系列的方法将会非常简单。
 
 ```java
@@ -311,8 +313,8 @@ private long acquireWrite(boolean interruptible, long deadline) {
         // 自旋次数大于0的话，有约50%的概率减少一次自旋
         // 也就是说大约自旋 2 * spins次，只要spins大于0，就不会入队，而是尝试CAS
         else if (spins > 0) {
-            // LockSupport.nextSecondarySeed()我测试了一下，执行1亿次
-            // 大约有一半的几率返回大于等于0的数，
+            // LockSupport.nextSecondarySeed()我测试了一下，我执行1亿次该方法
+            // 得到的结果是大约有一半的几率返回大于等于0的数，
             if (LockSupport.nextSecondarySeed() >= 0)
                 --spins;
         }
@@ -459,6 +461,8 @@ private long acquireWrite(boolean interruptible, long deadline) {
 
 看完了怎么获取写锁之后，自然是要看一下释放的逻辑了。不要担心，释放的逻辑并不复杂。
 
+#### 释放写锁源码
+
 写锁释放的顶层入口是```unlockWrite(long stamp)```方法，我们来看一下它的源码。
 
 ```java
@@ -469,13 +473,72 @@ public void unlockWrite(long stamp) {
     // 改变，除非使用锁的人（我们）写的代码有问题[doge]
     if (state != stamp || (stamp & WBIT) == 0L)
         throw new IllegalMonitorStateException();
+    // 更新state的值，如果stamp + WBIT == 0，
+    // （此时的stamp应该为1111 ... 1000 0000）
+    // 就跳过这个值，用ORIGIN来重新初始化state，否则就用
+    // stamp + WBIT来更新state，这样第8位就会由1变为0，并且
+    // 戳记的部分也会增加1。因为是独占，不需要同步
     state = (stamp += WBIT) == 0L ? ORIGIN : stamp;
+    // 队列不为空并且头结点状态不是0，调用release方法
+    // 在这里如果头结点状态为0表示头结点已经执行过release方法了
+    //TO-DO 因为release不只在该方法中被调用
     if ((h = whead) != null && h.status != 0)
         release(h);
 }
+
+private void release(WNode h) {
+    // 防止出现npe
+    if (h != null) {
+        WNode q; Thread w;
+        // CAS的把头结点的状态由WAITING修改为0
+        U.compareAndSwapInt(h, WSTATUS, WAITING, 0);
+        // 如果头结点的next指针为空或者next节点被取消了
+        if ((q = h.next) == null || q.status == CANCELLED) {
+            // 就从队尾向前找有效结点，为什么从后往前找呢？
+            // 这里和AQS是一样的，next指针仅作为一种优化，在入队时，线程执行CAS把自己设
+            // 为队尾成功时，prev指针是已经被连接的，并且结点也已经入队了，但是这个时候
+            // p.next = node（StampedLock）或者pred.next = node（AQS）这句语句有
+            // 可能没有执行，这个时候如果用next指针遍历CLH队列的话，很有可能会出现一种情况
+            // 就是遍历不到tail指向的那个结点，所以next指针应该用作启发式的作用，真要强
+            // 一致性还是要看我prev指针的[doge]。
+            for (WNode t = wtail; t != null && t != h; t = t.prev)
+                if (t.status <= 0)
+                    q = t;
+        }
+        // 防止npe 
+        if (q != null && (w = q.thread) != null)
+            // 唤醒有效后继结点的线程来获取锁
+            U.unpark(w);
+    }
+}
 ```
 
+释放的逻辑和上面获取的逻辑比起来可以说是灰常简单了，完成了两件事：
+
+1. 释放锁，```state = (stamp += WBIT) == 0L ? ORIGIN : stamp;```
+
+2. 唤醒有效后继结点来获取锁，```release(h)```
+
+至此，写锁获取与释放的源码分析完成。
+
 ### 悲观读锁源码
+
+#### 获取锁源码
+
+获取悲观读锁的顶级入口为```readLock()```，同写锁一样，这里不看try系列的源码。看完```readLock()```的源码后再去看try系列的方法将会非常简单。
+
+```readLock()```方法会返回一个```long```型的戳记，释放悲观读锁时需要传入这个戳记。理论上这个戳记再释放锁时不会改变，并且获得戳记后如果有其它线程也获取了悲观读锁，戳记并不会被改变。
+
+```java
+public long readLock() {
+    long s = state, next;  // bypass acquireRead on common uncontended case
+    return ((whead == wtail && (s & ABITS) < RFULL &&
+             U.compareAndSwapLong(this, STATE, s, next = s + RUNIT)) ?
+            next : acquireRead(false, 0L));
+}
+```
+
+#### 释放锁源码
 
 一个小小的线程获取个锁都要历经九九八十一难，泪目。
 
