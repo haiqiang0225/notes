@@ -263,12 +263,12 @@ private transient int readerOverflow;
    | ---------- | ------------------------------------------------------------ |
    | LG_READERS | 值为7，是溢出前用于记录读锁计数的二进制位数                  |
 | RUNIT      | ReadUnit，值为1L，跟```ReentrantReadWriteLock中```SHARED_UNIT一样，是用于给读计数加1的。 |
-|WBIT|WriteBit，值为1L << LG_READERS，也就是第8位的值为1，用做写锁标记。 0000 ... 1000 0000|
-   |RBITS|ReadBits，值为WBIT - 1L，二进制为低7位全部为1，其余为0。                      0000 ... 0111 1111|
+|WBIT|WriteBit，值为1L << LG_READERS，也就是第8位的值为1，用做写锁标记。                    0000 ... 1000 0000|
+   |RBITS|ReadBits，值为WBIT - 1L，二进制为低7位全部为1，其余为0。                                         0000 ... 0111 1111|
    |RFULL|ReadFull，值为RBITS - 1L，表示溢出前state中读计数的最大值，十进制值为126|
-   |ABITS|值为RBITS \| WBIT，用做掩码，stamp & ABITS可以得到后8位的值                 0000 ... 1111 1111|
-   |SBITS|StampedBits，值为~RBITS，用做掩码，state & SBITS可以得到戳记部分       1111 ... 1000 0000|
-   |ORIGIN|戳的初值，值为WBIT << 1，目的是跳过戳记的0值                                              0000 ... 0001 0000 0000|
+   |ABITS|AccessBits值为RBITS \| WBIT，用做掩码，stamp & ABITS可以得到后8位的值                 0000 ... 1111 1111|
+   |SBITS|StampedBits，值为~RBITS，用做掩码，state & SBITS可以得到戳记部分                         1111 ... 1000 0000|
+   |ORIGIN|戳的初值，值为WBIT << 1，目的是跳过戳记的0值                                                                0000 ... 0001 0000 0000|
    
 3. ```StampedLock```是基于CLH队列的，内部类```WNode```用来封装等待的线程，内部属性mode区分是读还是写模式，status区分结点的状态0/WAITING/CANCELLED。
 
@@ -309,6 +309,7 @@ private long acquireWrite(boolean interruptible, long deadline) {
         // spins < 0 成立说明是第一次进入循环，这里初始化自旋次数
         else if (spins < 0)
             // 如果有写锁，并且没有很多线程在排队就设置为SPINS，否者自旋次数置为0
+            // wtail == whead 有俩种可能，一种是两个都是null，另一个是两个都是读节点
             spins = (m == WBIT && wtail == whead) ? SPINS : 0;
         // 自旋次数大于0的话，有约50%的概率减少一次自旋
         // 也就是说大约自旋 2 * spins次，只要spins大于0，就不会入队，而是尝试CAS
@@ -519,6 +520,8 @@ private void release(WNode h) {
 
 2. 唤醒有效后继结点来获取锁，```release(h)```
 
+戳记显然经过一定的获取写锁/释放写锁会重复使用，比如当前戳记部分为全1后，下一个戳记就是最开始的只有一个1的戳记了，即```ORIGIN```。
+
 至此，写锁获取与释放的源码分析完成。
 
 ### 悲观读锁源码
@@ -527,20 +530,304 @@ private void release(WNode h) {
 
 获取悲观读锁的顶级入口为```readLock()```，同写锁一样，这里不看try系列的源码。看完```readLock()```的源码后再去看try系列的方法将会非常简单。
 
-```readLock()```方法会返回一个```long```型的戳记，释放悲观读锁时需要传入这个戳记。理论上这个戳记再释放锁时不会改变，并且获得戳记后如果有其它线程也获取了悲观读锁，戳记并不会被改变。
+```readLock()```方法会返回一个```long```型的戳记，释放悲观读锁时需要传入这个戳记。理论上这个戳记再释放锁时不会改变，并且获得戳记后如果有其它线程也获取了悲观读锁/乐观读锁，戳记并不会被改变。也就是说，只有获得写锁、释放写锁后，戳记才会改变。
 
 ```java
 public long readLock() {
     long s = state, next;  // bypass acquireRead on common uncontended case
+    // 1. wtail == whead 有俩种可能，一种是两个都是null，另一个是两个都是读节点
+    // 2. 如果1成立，并且读线程的计数还没有溢出，就CAS的尝试获取读锁，如果CAS成功了，返回戳记
+    // 3. 如果上面的情况有任何一个不满足，进入acquireRead逻辑
     return ((whead == wtail && (s & ABITS) < RFULL &&
              U.compareAndSwapLong(this, STATE, s, next = s + RUNIT)) ?
             next : acquireRead(false, 0L));
 }
 ```
 
+```readLock()```本身的逻辑还是很简单的，如果获取悲观读锁的条件满足，就尝试CAS的获取悲观读锁，成功就返回；而如果条件不满足或者说虽然条件满足，但是CAS操作失败了，那么就进入```acquireRead```的逻辑。
+
+下面的代码很长，小伙伴们做好心理准备啊，看到这里已经经历了八十难了，离九九八十一难就差这一个了，看完差不多可以立地成佛了，嘿嘿嘿。
+
+```java
+/**
+ * 通过形参就不难看出，超时不超时啥的逻辑都在这个方法了，所以，弄懂这个方法，别的
+ * 方法源码看起来就如张飞吃豆芽--小菜一碟。
+ */
+private long acquireRead(boolean interruptible, long deadline) {
+    WNode node = null, p;
+    // 内部仍然是两个大的for循环
+    for (int spins = -1;;) {
+        WNode h;
+        // h 是whead， p 是 wtail，也就是prev
+        // 如果头结点和尾结点相同了，就先进入下面自旋的逻辑
+        if ((h = whead) == (p = wtail)) {
+            // 这个for循环是入队前自旋的逻辑
+            for (long m, s, ns;;) {
+                // m 是后8位的值，如果没有超过RFULL，就尝试CAS修改state，获取悲观读锁
+                // 否则，判断有没有写锁， m < WBIT如果不成立，写锁位一定为1，没有写锁的
+                // 话就尝试增加readerOverflow的值，成功返回心得stamp即ns，不为0，失败返回0L
+                if ((m = (s = state) & ABITS) < RFULL ?
+                    U.compareAndSwapLong(this, STATE, s, ns = s + RUNIT) :
+                    (m < WBIT && (ns = tryIncReaderOverflow(s)) != 0L))
+                    // 这里返回有两种情况，一种是CAS成功，另一种是增加readerOverflow成功
+                    // 总之如果获取悲观读锁成功的话就直接在这里返回了
+                    return ns;
+                // m >= WBIT 说明有写锁，这个时候就不能获取悲观读锁了
+                else if (m >= WBIT) {
+                    // 自旋，慢慢减少自旋次数
+                    if (spins > 0) {
+                        if (LockSupport.nextSecondarySeed() >= 0)
+                            --spins;
+                    }
+                    else {
+                        // 说明已经自旋了一定次数了
+                        if (spins == 0) {
+                            // nh : new head  np : new prev
+                            WNode nh = whead, np = wtail;
+                            // 头尾结点均未发生改变 或者 虽然发生了改变，但是头结点不等于尾结点
+                            // 那么就停止自旋，否则一直从上面的for循环开始处执行，尝试获得锁
+                            if ((nh == h && np == p) || (h = nh) != (p = np))
+                                break;
+                        }
+                        // 初始化自旋次数，显然只有第一次进入时会执行
+                        spins = SPINS;
+                    }
+                }
+            }
+        }
+        /* 自旋阶段没有能获得悲观读锁，接下来就该入队和等待唤醒的逻辑了 */
+        // p 是 wtail，如果队列为空的话，就新建一个WMODE的结点作为头结点
+        if (p == null) { // initialize queue
+            WNode hd = new WNode(WMODE, null);
+            if (U.compareAndSwapObject(this, WHEAD, null, hd))
+                wtail = hd;
+        }
+        // node还没创建的话，就创建一个node
+        else if (node == null)
+            node = new WNode(RMODE, p);
+        // 头结点等于尾结点 或者 尾结点不是读模式结点
+        else if (h == p || p.mode != RMODE) {
+            // 如果尾结点发生了改变
+            if (node.prev != p)
+                // 指向新的尾结点
+                node.prev = p;
+            // 尾结点没改变的话，CAS的将尾结点指向自己，尝试入队
+            else if (U.compareAndSwapObject(this, WTAIL, p, node)) {
+                p.next = node;
+                // 入队成功就跳出一个大循环
+                break;
+            }
+        }
+        // 如果尾结点是读模式，尝试将当前结点入栈。操作方法就是把尾结点的cowait指向自己，
+        // 并且把自己的cowait指向尾结点原来的cowait，最终就成了一条链，链接尾结点上
+        // 成功入栈的话，这个if判定失败，进入下面的else
+        else if (!U.compareAndSwapObject(p, WCOWAIT,
+                                         node.cowait = p.cowait, node))
+            // 失败的话，cowait重新设置为null
+            node.cowait = null;
+        else {
+            /**
+             * 进入这个自旋，说明上面的if全部判断失败，梳理下：
+             *  1. 队列不为空
+             *  2. node不为空（已创建当前线程对应的node实例）
+             *  3. 头尾节点没有发生变化，并且尾结点不为读模式
+             *  4. 尾结点虽然是读模式，并且CAS的修改cowait成功
+             * 并且结点还没能成功入队
+             */
+            for (;;) {
+                // 显然，pp = p.prev; c = h.cowait、 w = head.thread
+                WNode pp, c; Thread w;
+                // 头结点不为null，并且头结点上cowait不为null，协助唤醒在其上等待的读结点
+                if ((h = whead) != null && (c = h.cowait) != null &&
+                    U.compareAndSwapObject(h, WCOWAIT, c, c.cowait) &&
+                    (w = c.thread) != null) // help release
+                    U.unpark(w);
+                // 前驱结点的前驱为头结点，或者前驱结点就是头结点，或者前驱的前驱为null
+                // 上面几种情况都表明了一点，就是CLH队列里已经没有多少结点在等待了
+                if (h == (pp = p.prev) || h == p || pp == null) {
+                    // m = 后8位的值， s = state， ns = next state
+                    long m, s, ns;
+                    do {
+                        // 仍然是自旋获得悲观读锁的逻辑，当有写锁时，会跳出这段逻辑
+                        if ((m = (s = state) & ABITS) < RFULL ?
+                            U.compareAndSwapLong(this, STATE, s,
+                                                 ns = s + RUNIT) :
+                            (m < WBIT &&
+                             (ns = tryIncReaderOverflow(s)) != 0L))
+                            return ns;
+                    } while (m < WBIT);
+                }
+                // 头结点没有变，并且前驱的前驱没有被取消
+                if (whead == h && p.prev == pp) {
+                    long time;
+                    // 前驱的前驱为空，或者前驱为头结点，或者前驱已经被取消
+                    // 那么就跳出这段for循环，回到最初那个最大的for循环开始执行
+                    if (pp == null || h == p || p.status > 0) {
+                        node = null; // throw away
+                        break;
+                    }
+                    // 如果没有定时
+                    if (deadline == 0L)
+                        time = 0L;
+                    // 超时就取消
+                    else if ((time = deadline - System.nanoTime()) <= 0L)
+                        return cancelWaiter(node, p, false);
+                    Thread wt = Thread.currentThread();
+                    // 看到这里很明显了，终于要阻塞当前线程了
+                    U.putObject(wt, PARKBLOCKER, this);
+                    node.thread = wt;
+                    // 这个判断就是说明，当前线程真的不能马上获得锁
+                    if ((h != pp || (state & ABITS) == WBIT) &&
+                        whead == h && p.prev == pp)
+                        U.park(false, time);
+                    // 被唤醒了，又要进入下一轮获取了
+                    node.thread = null;
+                    U.putObject(wt, PARKBLOCKER, null);
+                    if (interruptible && Thread.interrupted())
+                        return cancelWaiter(node, p, true);
+                }
+            }
+        }
+    }
+
+    /* 第二个大的自旋 */
+    // 进入这个自旋只有一种可能，就是上面node执行cas(this, WTAIL, p, node)
+    // 成功，说明当前结点成功进入CLH队列，入队后会break跳出最外层大的for循环,
+    // 并且从上面入队的条件可以发现，入队的结点的前驱结点一定不是读模式的结点,
+    // 也可以看出，如果有多个读线程同时入队的话，这些个线程会链接在第一个成功入队
+    // 的读结点的cowait上，形成一个链（也可以说是栈，符合先入后出）。
+    for (int spins = -1;;) {
+        // 老几样， h = head， np = node.prev pp = pred.prev ps = pred.status
+        WNode h, np, pp; int ps;
+        // 前驱结点已经是头结点了
+        if ((h = whead) == p) {
+            // 那么就自旋，期望获得读锁
+            if (spins < 0)
+                spins = HEAD_SPINS;
+            // 多自旋几次
+            else if (spins < MAX_HEAD_SPINS)
+                spins <<= 1;
+            // 在头部自旋的逻辑，不用看也知道又是获得悲观读锁的逻辑
+            for (int k = spins;;) { // spin at head
+                // 老三样 m 是后8位的值， s = state， ns = next state
+                long m, s, ns;
+                // 条件满足就尝试获得锁
+                if ((m = (s = state) & ABITS) < RFULL ?
+                    U.compareAndSwapLong(this, STATE, s, ns = s + RUNIT) :
+                    (m < WBIT && (ns = tryIncReaderOverflow(s)) != 0L)) {
+                    // 成功获得锁了，就唤醒链接在自己身上的兄弟们，一起来获得悲观读锁
+                    WNode c; Thread w;
+                    whead = node;
+                    node.prev = null;
+                    // 唤醒兄弟们的逻辑
+                    while ((c = node.cowait) != null) {
+                        if (U.compareAndSwapObject(node, WCOWAIT,
+                                                   c, c.cowait) &&
+                            (w = c.thread) != null)
+                            U.unpark(w);
+                    }
+                    // 兄弟们唤醒完了，收工！
+                    return ns;
+                } // 如果不满足获得锁的条件，并且自旋已经到了一定的次数了，就跳出在头部自旋的逻辑
+                else if (m >= WBIT &&
+                         LockSupport.nextSecondarySeed() >= 0 && --k <= 0)
+                    break;
+            }
+        }
+        // 前驱不是头结点，并且头结点不为null
+        else if (h != null) {
+            WNode c; Thread w;
+            // 协助唤醒头结点上的读线程（如果有的话）
+            while ((c = h.cowait) != null) {
+                if (U.compareAndSwapObject(h, WCOWAIT, c, c.cowait) &&
+                    (w = c.thread) != null)
+                    U.unpark(w);
+            }
+        }
+        /* 前面的自旋获取锁又双叒叕失败了（咋那么不争气那）*/
+        // 如果头结点没有发生改变，发生改变的话又要跳到前面自旋的逻辑去了
+        // 因为有可能又有机会获得锁了
+        if (whead == h) {
+            // 如果前面有失效的结点，跳过这些节点，然后回到自旋逻辑
+            // 又有可能很快可以获得锁了
+            if ((np = node.prev) != p) {
+                if (np != null)
+                    (p = np).next = node;   // stale
+            }
+            // 如果前驱的status为0，就尝试设为WATING，然后回到前面自旋
+            else if ((ps = p.status) == 0)
+                U.compareAndSwapInt(p, WSTATUS, 0, WAITING);
+            // 如果前驱被取消了，跳过前驱，然后继续自旋
+            else if (ps == CANCELLED) {
+                if ((pp = p.prev) != null) {
+                    node.prev = pp;
+                    pp.next = node;
+                }
+            }
+            // 很不幸，上面的好事都没有发生，又要阻塞了
+            else {
+                long time;
+                if (deadline == 0L)
+                    time = 0L;
+                // 超时取消
+                else if ((time = deadline - System.nanoTime()) <= 0L)
+                    return cancelWaiter(node, node, false);
+                Thread wt = Thread.currentThread();
+                // 阻塞
+                U.putObject(wt, PARKBLOCKER, this);
+                node.thread = wt;
+                if (p.status < 0 &&
+                    (p != h || (state & ABITS) == WBIT) &&
+                    whead == h && node.prev == p)
+                    U.park(false, time);
+                node.thread = null;
+                U.putObject(wt, PARKBLOCKER, null);
+                // 如果是响应中断的模式，并且被中断了，那么取消调度
+                if (interruptible && Thread.interrupted())
+                    return cancelWaiter(node, node, true);
+            }
+        }
+    }
+}
+```
+
+终于看完了，泪目。梳理一下```acquireRead```的流程，按两个大的for循环来看。
+
+第一个大的for循环：
+
+1. 如果头结点和尾结点相同，就先自旋一定的次数，尝试去获得悲观读锁，成功后返回戳记，失败后尝试入队
+2. 如果是第一个入队的，那么就先初始化队列，初始化完成后，从1重新开始（注意初始化的第一个节点为WMODE）
+3. 队列不为空，但是当前线程对应的结点还没有创建，那么就去创建，创建完成后，再次从1开始
+4. 当前结点没法获得锁（123均判定失败），如果头结点等于尾结点或者虽然不相同，但是尾结点是读模式结点，则准备入队，分以下两种情况
+   1. 如果尾结点发生了改变，就更新自己的prev指向新的尾结点，然后回到1
+   2. 尾结点没改变的话，当前线程就会尝试CAS的更新wtail来入队，入队成功后跳出第一个大循环
+5. 如果尾结点是读模式的话，尝试把自己链到尾结点的```cowait```上，成功的话，进入6，失败的话，返回1
+6. 上面的情况都不满足，又进入一个自旋
+   1. 协助唤醒头结点上的读结点（如果有的话）
+   2. 再次判断一下是否快要获得锁了，是的话再次自旋尝试获得锁
+   3. 经过一系列判断后，阻塞当前线程（到这里并没有成功入队）
+
+第一个大的for循环的逻辑大致就是各种尝试获得悲观写锁，如果最后一个结点是读结点的话，就把自己链接到它的```cowait```上，如果自旋了一定的次数，并且头结点尾结点都没有发生改变的话，才尝试入队，成功入队后跳出第一个大的for循环，进入第二个大的for循环。
+
+第二个大的for循环：
+
+1. 前驱是头结点的话，各种判断是否很快/有资格获得悲观读锁，如果条件都满足的话，就自旋尝试获取悲观读锁，如果成功获得锁，就唤醒“挂”在自己身上的兄弟们，让它们也来尝试获得锁（注意这个时候当前线程已经作为结点进入同步队列了）如果不满足获得锁的条件，或者已经自旋了一定的次数了，跳出自旋的逻辑，进入3
+
+2. 前驱不是头结点的话，协助唤醒头结点上的线程，然后进入3
+
+3. 还是先判断CLH队列是否发生变化等等能让自己有机会获得锁的事情有没有发生（贼心不死啊），没有发生的话就阻塞，发生了的话，再次自旋。阻塞后被唤醒就再次进入到第二个for循环开始处执行
+
+看完这里的代码我们大致知道这里实现的CLH队列是什么样的了，**首先最先初始化的头结点是一个```WMODE```的空结点，之后随着线程释放锁获取锁的操作，如果有结点成功获得读锁，那么这个结点就会成为头结点，之后的获取读和写锁的方法都会协助唤醒这个结点上链接的读结点，如果这些读结点又获取锁失败了（争点气啊），那么这些结点自旋一阵后，又会进入同步队列排队，第一个读结点入队时会插入队列中，之后的读结点会链接在这个结点的```cowait```上**。
+
+//TO-DO 添加debug的截图，证明确实如上所述
+
+//TO-DO 到这里我们就了解了Stampedlock中CLH队列的样子了，添加对应的图示
+
+看完这部分源码不禁感叹：一个小小的线程获取个锁都要历经九九八十一难，泪目。
+
 #### 释放锁源码
 
-一个小小的线程获取个锁都要历经九九八十一难，泪目。
+
 
 ### 乐观读锁源码
 
