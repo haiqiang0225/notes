@@ -166,7 +166,6 @@ void moveIfAtOrigin(double newX, double newY) {
 
 
 ```java
-
 // jvm可用的cpu个数
 private static final int NCPU = Runtime.getRuntime().availableProcessors();
 
@@ -223,7 +222,7 @@ private static final int WMODE = 1;
 static final class WNode {
     volatile WNode prev;
     volatile WNode next;
-    //TO-DO 读模式使用该引用
+    // 读模式使用该引用链接读结点
     volatile WNode cowait;    // list of linked readers
     volatile Thread thread;   // non-null while possibly parked
     volatile int status;      // 0, WAITING, or CANCELLED
@@ -262,14 +261,14 @@ private transient int readerOverflow;
    | 属性       | 描述                                                         |
    | ---------- | ------------------------------------------------------------ |
    | LG_READERS | 值为7，是溢出前用于记录读锁计数的二进制位数                  |
-| RUNIT      | ReadUnit，值为1L，跟```ReentrantReadWriteLock中```SHARED_UNIT一样，是用于给读计数加1的。 |
-|WBIT|WriteBit，值为1L << LG_READERS，也就是第8位的值为1，用做写锁标记。                    0000 ... 1000 0000|
-   |RBITS|ReadBits，值为WBIT - 1L，二进制为低7位全部为1，其余为0。                                         0000 ... 0111 1111|
-   |RFULL|ReadFull，值为RBITS - 1L，表示溢出前state中读计数的最大值，十进制值为126|
-   |ABITS|AccessBits值为RBITS \| WBIT，用做掩码，stamp & ABITS可以得到后8位的值                 0000 ... 1111 1111|
-   |SBITS|StampedBits，值为~RBITS，用做掩码，state & SBITS可以得到戳记部分                         1111 ... 1000 0000|
-   |ORIGIN|戳的初值，值为WBIT << 1，目的是跳过戳记的0值                                                                0000 ... 0001 0000 0000|
-   
+   | RUNIT      | ReadUnit，值为1L，跟```ReentrantReadWriteLock中```SHARED_UNIT一样，是用于给读计数加1的。 |
+   | WBIT       | WriteBit，值为1L << LG_READERS，也就是第8位的值为1，用做写锁标记。                    0000 ... 1000 0000 |
+   | RBITS      | ReadBits，值为WBIT - 1L，二进制为低7位全部为1，其余为0。                                         0000 ... 0111 1111 |
+   | RFULL      | ReadFull，值为RBITS - 1L，表示溢出前state中读计数的最大值，十进制值为126 |
+   | ABITS      | AccessBits值为RBITS \| WBIT，用做掩码，stamp & ABITS可以得到后8位的值                 0000 ... 1111 1111 |
+   | SBITS      | StampedBits，值为~RBITS，用做掩码，state & SBITS可以得到戳记部分                         1111 ... 1000 0000 |
+   | ORIGIN     | 戳的初值，值为WBIT << 1，目的是跳过戳记的0值                                                                0000 ... 0001 0000 0000 |
+
 3. ```StampedLock```是基于CLH队列的，内部类```WNode```用来封装等待的线程，内部属性mode区分是读还是写模式，status区分结点的状态0/WAITING/CANCELLED。
 
 下面我们分别从写锁、悲观读锁、乐观读锁三方面来看源码。
@@ -290,7 +289,7 @@ public long writeLock() {
 }
 ```
 
-//TO-DO ： 从```writeLock()```的源码我们可以看出```StampedLock```的实现是非公平锁
+从```writeLock()```的源码我们可以看出```StampedLock```的实现是非公平锁。
 
 ```acquireWrite(boolean interruptible, long deadline)```的代码非常长，下面我们配合着注释一点一点的来看
 
@@ -363,7 +362,9 @@ private long acquireWrite(boolean interruptible, long deadline) {
                 if (((s = state) & ABITS) == 0L) {
                     if (U.compareAndSwapLong(this, STATE, s,
                                              ns = s + WBIT)) {
+                        // 获得锁成功后，把头结点设置为自己
                         whead = node;
+                        // 清空前驱的引用，帮助GC回收
                         node.prev = null;
                         return ns;
                     }
@@ -452,7 +453,7 @@ private long acquireWrite(boolean interruptible, long deadline) {
 
 第二个for循环的逻辑：
 
-1. 如果成功入队的结点的前驱结点是头结点的话，说明当前结点很有可能会很快有机会获得锁，因此先自旋一定的次数而不是阻塞。自旋一定的次数还没有获得锁的话，停止自旋。
+1. 如果成功入队的结点的前驱结点是头结点的话，说明当前结点很有可能会很快有机会获得锁，因此先自旋一定的次数而不是阻塞。自旋一定的次数还没有获得锁的话，停止自旋。如果入队后的自旋成功获得锁的话，线程会把自己设置为头结点，也就是说**这一点和AQS的CLH队列是一样的，头结点要么是最开始入队时初始化的一个空结点（没有线程），要么是已经获得了锁的结点。**
 
 2. 如果成功入队的结点的前驱结点不是头结点的话，就去协助唤醒等待在头结点上的读结点（如果有的话）。
 
@@ -482,7 +483,7 @@ public void unlockWrite(long stamp) {
     state = (stamp += WBIT) == 0L ? ORIGIN : stamp;
     // 队列不为空并且头结点状态不是0，调用release方法
     // 在这里如果头结点状态为0表示头结点已经执行过release方法了
-    //TO-DO 因为release不只在该方法中被调用
+    // 因为release不只在该方法中被调用h.status == 0说明已经执行过release方法了
     if ((h = whead) != null && h.status != 0)
         release(h);
 }
@@ -606,6 +607,8 @@ private long acquireRead(boolean interruptible, long deadline) {
         else if (node == null)
             node = new WNode(RMODE, p);
         // 头结点等于尾结点 或者 尾结点不是读模式结点
+        // 也就是说，前驱如果是读模式的话，当前结点是永远都不会
+        // 将自己入队的，而是一直挂在前驱的cowait上
         else if (h == p || p.mode != RMODE) {
             // 如果尾结点发生了改变
             if (node.prev != p)
@@ -817,19 +820,93 @@ private long acquireRead(boolean interruptible, long deadline) {
 
 3. 还是先判断CLH队列是否发生变化等等能让自己有机会获得锁的事情有没有发生（贼心不死啊），没有发生的话就阻塞，发生了的话，再次自旋。阻塞后被唤醒就再次进入到第二个for循环开始处执行
 
-看完这里的代码我们大致知道这里实现的CLH队列是什么样的了，**首先最先初始化的头结点是一个```WMODE```的空结点，之后随着线程释放锁获取锁的操作，如果有结点成功获得读锁，那么这个结点就会成为头结点，之后的获取读和写锁的方法都会协助唤醒这个结点上链接的读结点，如果这些读结点又获取锁失败了（争点气啊），那么这些结点自旋一阵后，又会进入同步队列排队，第一个读结点入队时会插入队列中，之后的读结点会链接在这个结点的```cowait```上**。
-
-//TO-DO 添加debug的截图，证明确实如上所述
-
-//TO-DO 到这里我们就了解了Stampedlock中CLH队列的样子了，添加对应的图示
+看完这里的代码我们大致知道这里实现的CLH队列是什么样的了，**首先最先初始化的头结点是一个```WMODE```的空结点，之后随着线程释放锁获取锁的操作，如果有结点成功获得读锁，那么这个结点就会成为头结点，之后的获取读和写锁的方法都会协助唤醒这个结点上链接的读结点，如果这些读结点又获取锁失败了（争点气啊），那么这些结点自旋一阵后，又会进入同步队列排队，第一个读结点入队时会插入队列中，之后的读结点会链接在这个结点的```cowait```上**。文章的最后有CLH队列的结构图，小伙伴们可以跳到最后看一看。
 
 看完这部分源码不禁感叹：一个小小的线程获取个锁都要历经九九八十一难，泪目。
 
 #### 释放锁源码
 
+```unlockRead(long stamp)```是释放悲观读锁的顶级入口，这里的源码就比较简单了
 
+```java
+public void unlockRead(long stamp) {
+    long s, m; WNode h;
+    for (;;) {
+        // 如果戳记改变了，或者读线程计数为0，或者有读锁，抛出异常
+        if (((s = state) & SBITS) != (stamp & SBITS) ||
+            (stamp & ABITS) == 0L || (m = s & ABITS) == 0L || m == WBIT)
+            throw new IllegalMonitorStateException();
+        // 如果没有溢出，就从state读计数部分减少计数值
+        if (m < RFULL) {
+            if (U.compareAndSwapLong(this, STATE, s, s - RUNIT)) {
+                // RUNIT = 1，m == RUNIT说明读锁已经全部释放，如果头结点不为null
+                // 且status不为0的话就执行release方法唤醒后继
+                if (m == RUNIT && (h = whead) != null && h.status != 0)
+                    release(h);
+                break;
+            }
+        }
+        // 否则减少溢出部分的计数值
+        else if (tryDecReaderOverflow(s) != 0L)
+            break;
+    }
+}
+// 唤醒后继结点的方法，跟写锁释放中的是同一个方法
+private void release(WNode h) {
+    if (h != null) {
+        WNode q; Thread w;
+        U.compareAndSwapInt(h, WSTATUS, WAITING, 0);
+        if ((q = h.next) == null || q.status == CANCELLED) {
+            for (WNode t = wtail; t != null && t != h; t = t.prev)
+                if (t.status <= 0)
+                    q = t;
+        }
+        if (q != null && (w = q.thread) != null)
+            U.unpark(w);
+    }
+}
+```
 
 ### 乐观读锁源码
 
+在看完写锁和悲观读锁的源码后，根据乐观锁的使用方法，想必聪明的你已经大概想到了乐观读锁是怎么实现的了，每次调用乐观读方法应该是返回当前时刻的戳记，之后执行的```validate(long)```方法应该是把这个传入的戳记和内部```state```中的戳记比较一下，相同说明没有写入，不相同说明发生了写入，下面看一下源码
+
+```java
+public long tryOptimisticRead() {
+    long s;
+    // 先判断有没有写锁，
+    return (((s = state) & WBIT) == 0L) ? (s & SBITS) : 0L;
+}
+
+public boolean validate(long stamp) {
+    // 读内存屏障，禁止load指令被重排序穿过屏障，即不允许屏障前的load
+    // 指令被重排序到屏障之后，也不允许屏障后的load指令被重排序到屏障之前
+    U.loadFence();
+    // 如果戳记改变，返回false，否则返回true
+    return (stamp & SBITS) == (state & SBITS);
+}
+```
+
+至此，```Stampedlock```主要的源码都分析完成。```Stampedlock```中的CLH队列结构如下：
+
+### 内部CLH队列结构
+
+![CLH队列](https://img-blog.csdnimg.cn/20210317101523165.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzE5MDA3MzM1,size_16,color_FFFFFF,t_70#pic_center)
 
 
+我们不妨写个程序验证一下。下面的代码先创建一个线程占有写锁，然后创建5个读线程获取悲观读锁，之后创建一个线程尝试获得写锁，我们在对应位置打上断点。
+
+![调试](https://img-blog.csdnimg.cn/20210317101540180.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzE5MDA3MzM1,size_16,color_FFFFFF,t_70#pic_center)
+
+
+运行代码，先暂停在最后获得写锁的地方。
+
+![调试](https://img-blog.csdnimg.cn/20210317101557637.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzE5MDA3MzM1,size_16,color_FFFFFF,t_70#pic_center)
+
+
+可以看到，这时已经建立了头结点，并且有读结点在其后等待，之后我们再继续调试，进入```writeLock()```方法中，执行到该结点也入队。
+
+![调试](https://img-blog.csdnimg.cn/20210317101613363.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzE5MDA3MzM1,size_16,color_FFFFFF,t_70#pic_center)
+
+
+可以看到此时队列中有一个空头结点和一个读模式结点，和最后处于写模式的尾结点。小伙伴们也可以自己写demo来验证，这里就到此为止吧。
