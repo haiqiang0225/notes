@@ -301,6 +301,7 @@ private int expungeStaleEntry(int staleSlot) {
 3. rehash的过程也很简单，先判断当前槽中的Entry是否是因为冲突了才存放的这里的，是的话就从根据它的hash值算出的存放位置开始往后找空的槽把它放下。
 
 大致过程如下面图片：
+
 ![//TO-DO rehash1的图片](https://img-blog.csdnimg.cn/20210320154748981.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzE5MDA3MzM1,size_16,color_FFFFFF,t_70)
 
 
