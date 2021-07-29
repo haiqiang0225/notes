@@ -56,6 +56,8 @@
 
 <font color='#00CACA'>**AX，BX，CX，DX**</font>**均可以分为独立的两个寄存器来使用，其中xH为高8位，xL为低8位，x∈(A,B,C,D)**，这样做的目的是兼容以前的8位程序，一样的，在32位CPU中，**<font color='#4B0082'>EAX，EBX，ECX，EDX</font>**也可以分为两个16位寄存器；64位CPU中，**<font color='1E90FF'>RAX，RBX，RCX，RDX</font>**也可以分为两个独立的32位寄存器使用。每个寄存器分开使用时，彼此之间都是<font color='red'>**独立**</font>的，比如AH和AL，当AL中存储的数据溢出时，是不会影响到AH中的数值的，虽然物理上来说，AH和AL是同一寄存器的高8位和低8位。但是修改AH或AL均会影响AX的值。
 
+#### AX
+
 **<font color='#00CACA'>AX</font>**：在使用div、mul指令时会使用到。
 
 **<font color="Cornislk">div</font>**：除数可以在寄存器或者内存中，而被除数默认存放在AX或AX和DX中。除数有8位和16位两种情况
@@ -82,10 +84,18 @@
 
 - 都是32位，一个默认在EAX中
 
-  | 被乘数 | 乘数         | 乘积 |
-  | ------ | ------------ | ---- |
-  | AL     | 8 \| reg/mem | AX   |
-  |        |              |      |
-
+  | 被乘数 | 乘数         | 乘积    |
+  | ------ | ------------ | ------- |
+  | AL     | 8 \| reg/mem | AX      |
+  | AX     | 16\|reg/mem  | DX:AX   |
+  | EAX    | 32\|reg/mem  | EDX:EAX |
+  
   
 
+#### BX
+
+**<font color='#00CACA'>BX</font>**：基址寄存器，除了可以暂存数据外还可以用于内存寻址
+
+#### CX
+
+**<font color='#00CACA'>CX</font>**：计数寄存器，除了可以暂存数据外还可以与loop指令配合使用，用于指定loop的次数
