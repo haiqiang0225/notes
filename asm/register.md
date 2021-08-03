@@ -98,4 +98,44 @@
 
 #### CX
 
-**<font color='#00CACA'>CX</font>**：计数寄存器，除了可以暂存数据外还可以与loop指令配合使用，用于指定loop的次数
+**<font color='#00CACA'>CX</font>**：计数寄存器，除了可以暂存数据外还可以与loop指令配合使用，用于指定loop的次数。
+
+cpu在执行loop指令时会做两件事：
+
+- 1）CX=CX-1
+- 2）如果CX中的值为0，则跳出循环
+
+#### DX
+
+**<font color='#00CACA'>DX</font>**：数据寄存器，除了暂存数据外还可以与div和mul指令配合使用，见AX中[div](#AX)、[mul](#AX)指令相关部分。
+
+### 指针寄存器
+
+#### BP
+
+**<font color='#585eaa'>BP</font>**：base pointer，基指针寄存器，可以用于内存寻址，同样可用于内存寻址的还有**<font color="#f58220">BX、SI、DI</font>**寄存器。
+
+#### SP
+
+**<font color='#585eaa'>BP</font>**：stack pointer，堆栈指针寄存器，需要与SS段寄存器一起使用。
+
+### 变址寄存器
+
+#### SI
+
+**<font color="#5c7a29">SI</font>**：source index，源变址寄存器，用于存放某个存储单元地址的偏移地址。同样也可以暂存数据。
+
+#### DI
+
+**<font color="#5c7a29">DI</font>**：destination index，目的变址寄存器，类似SI。
+
+### 其他
+
+#### CS：IP
+
+**<font color="#f26522">CS：IP</font>**：任意时刻，CS：IP指向CPU下一条要执行的指令的地址。CS为代码段寄存器（code segment），IP为指令指针寄存器（instruction pointer）。
+
+#### SS：SP
+
+**<font color="#f26522">SS：SP</font>**：在任何时刻，SS:SP 都是指向栈顶元素 。SS，stack segment，堆栈段寄存器；SP，stack pointer，堆栈指针寄存器。
+
