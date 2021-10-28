@@ -995,3 +995,16 @@ unexport <variable>
 
 > <variable>是变量的名字，不需要使用$字符，如果所有的变量都需要传递，单独使用`export`关键字不加任何参数即可。另外需要注意的是要将make的`export`关键字与shell中的`export`区分开来。
 
+Makefile 中还有两个变量不管是不是使用关键字 "export" 声明，它们总会传递到下层的 Makefile 中。这两个变量分别是 SHELL 和 MAKEFLAGS，特别是 MAKEFLAGS 变量，包含了 make 的参数信息。如果执行总控 Makefile 时，make 命令带有参数或者在上层的 Makefile 中定义了这个变量，那么 MAKEFLAGS 变量的值将会是 make 命令传递的参数，并且会传递到下层的 Makefile 中，这是一个系统级别的环境变量。
+
+make 命令中有几个参数选项并不传递，它们是:"-C"、"-f"、"-o"、"-h" 和 "-W"。如果我们不想传递 MAKEFLAGS 变量的值，在 Makefile 中可以这样来写：
+
+```makefile
+subsystem:
+		cd subdir && $(MAKE) MAKEFLAGS=
+```
+
+## 嵌套执行make的案例
+
+[嵌套执行make的案例](http://c.biancheng.net/view/7157.html)
+
