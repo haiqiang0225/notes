@@ -1008,3 +1008,12 @@ subsystem:
 
 [嵌套执行make的案例](http://c.biancheng.net/view/7157.html)
 
+ # 其他
+
+## .c.o	.s.o
+
+```makefile
+.c.o 等价于 %.o:%.c
+.s.o 等价于 %.o:%.s
+```
+
