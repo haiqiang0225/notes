@@ -1,6 +1,6 @@
 [toc]
 
-# Nginx
+# Nginx 环境搭建
 
 ## 安装部署
 
@@ -31,10 +31,10 @@ Linux版本：`Ubuntu 20.04 LTS`
 tar -xzvf nginx-1.20.2.tar.gz
 ```
 
-解压完成后，在Nginx根目录执行
+解压完成后，在Nginx根目录执行（后续用到ssl模块，在这里直接安装或者后续再手动安装都可以）
 
 ```bash
-./configure 
+./configure --with-http_ssl_module
 ```
 
 发现报错，安装依赖：
@@ -92,7 +92,7 @@ ExecStartPre=/usr/local/nginx/sbin/nginx -t -c /usr/local/nginx/conf/nginx.conf
 ExecStart=/usr/local/nginx/sbin/nginx -c /usr/local/nginx/conf/nginx.conf
 ExecReload=/usr/local/nginx/sbin/nginx -s reload
 ExecStop=/usr/local/nginx/sbin/nginx -s stop
-ExecQuit=/usr/local/nginx/sbin/nginx -s quit
+# ExecQuit=/usr/local/nginx/sbin/nginx -s quit
 PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
@@ -319,9 +319,9 @@ vim /usr/local/nginx/conf/nginx.con
 
 > `tx_cloud`和`vm_host`是我在本机的hosts文件中配置的，这里需要换成你自己对应的ip地址或者域名。
 
-![image-20220502205507106](../../../Documents/tmp/nginx_download_06.png)
+![image-20220502205507106](https://haiqiang-picture.oss-cn-beijing.aliyuncs.com/blog/nginx_download_06.png)
 
-![image-20220502205450826](../../../Documents/tmp/nginx_download_07.png)
+![image-20220502205450826](https://haiqiang-picture.oss-cn-beijing.aliyuncs.com/blog/nginx_download_07.png)
 
 - 轮询算法
 
@@ -545,7 +545,7 @@ Referer是HTTP请求头的一部分，携带了HTTP请求的来源地址信息�
 
 [下载地址](https://www.keepalived.org/download.html)
 
-![image-20220503150756963](../../../Documents/tmp/nginx_download_08.png)
+![image-20220503150756963](https://haiqiang-picture.oss-cn-beijing.aliyuncs.com/blog/image-20220503150756963.png)
 
 解压：
 
@@ -628,8 +628,57 @@ systemctl start keepalived.service
 
 查看网卡信息`ip addr`，可以看到`vip`已经生效了，且在其它机器可以ping通该ip:
 
-![image-20220503211831225](../../../Documents/tmp/nginx_download_09.png)
+![image-20220503211831225](https://haiqiang-picture.oss-cn-beijing.aliyuncs.com/blog/image-20220503211831225.png)
 
 关掉第一个机器，发现ip漂移成功。
 
-![image-20220503212042724](../../../Documents/tmp/nginx_download_10.png)
+![image-20220503212042724](https://haiqiang-picture.oss-cn-beijing.aliyuncs.com/blog/nginx_download_10.png)
+
+## SSl证书配置
+
+- 从服务商申请一个证书，我使用的是腾讯云。腾讯云使用的是下面框出的文件，第一个是证书，第二个是私钥文件。
+
+    ![image-20220504110357889](https://haiqiang-picture.oss-cn-beijing.aliyuncs.com/blog/nginx_download_11.png)
+
+- `nginx.conf`配置
+
+    ```bash
+    		# HTTPS server
+        
+        server {
+            listen       443 ssl;
+            server_name  seckill.cc;
+    
+            ssl_certificate      /usr/local/nginx/conf/cert/seckill.cc_bundle.crt;
+            ssl_certificate_key  /usr/local/nginx/conf/cert/seckill.cc.key;
+    
+            ssl_session_cache    shared:SSL:1m;
+            ssl_session_timeout  5m; 
+    
+            ssl_ciphers  HIGH:!aNULL:!MD5;
+            ssl_prefer_server_ciphers  on; 
+    
+            location / { 
+                proxy_pass http://test;
+            }
+        }   
+        
+        # 80 端口重定向到443端口
+        server {
+            listen       80;
+            server_name  seckill.cc;
+    
+            rewrite ^(.*)$ https://$host$1 permanent;
+    
+            error_page   500 502 503 504  /50x.html;
+            location = /50x.html {
+                root   html;
+            }
+    
+        }   
+    ```
+
+- 重启nginx服务，访问网站，现在证书生效了。![image-20220504110739872](https://haiqiang-picture.oss-cn-beijing.aliyuncs.com/blog/nginx_download_12.png)
+
+    
+
