@@ -461,8 +461,6 @@ public interface BeanMetadataElement {
   private Set<String> externallyManagedDestroyMethods;
 ```
 
-
-
 ### GenericBeanDefinition
 
 `GenericBeanDefinition`是用于标准bean definition的一站式服务。与任何bean definition一样，它允许指定类以及可选的构造函数参数值和属性值。此外，可以通过`parentName`属性灵活配置从父bean definition派生的内容。
@@ -473,11 +471,90 @@ public interface BeanMetadataElement {
 
 ![image-20220525194638746](../../../Library/Application%20Support/typora-user-images/image-20220525194638746.png)
 
+```java
+public class GenericBeanDefinition extends AbstractBeanDefinition {
+
+  @Nullable
+  private String parentName;
+
+  public GenericBeanDefinition() {
+    super();
+  }
+
+  public GenericBeanDefinition(BeanDefinition original) {
+    super(original);
+  }
+
+
+  @Override
+  public void setParentName(@Nullable String parentName) {
+    this.parentName = parentName;
+  }
+
+  @Override
+  @Nullable
+  public String getParentName() {
+    return this.parentName;
+  }
+
+
+  @Override
+  public AbstractBeanDefinition cloneBeanDefinition() {
+    return new GenericBeanDefinition(this);
+  }
+
+  @Override
+  public boolean equals(@Nullable Object other) {
+    if (this == other) {
+      return true;
+    }
+    if (!(other instanceof GenericBeanDefinition)) {
+      return false;
+    }
+    GenericBeanDefinition that = (GenericBeanDefinition) other;
+    return (ObjectUtils.nullSafeEquals(this.parentName, that.parentName) && super.equals(other));
+  }
+
+  @Override
+  public String toString() {
+    if (this.parentName != null) {
+      return "Generic bean with parent '" + this.parentName + "': " + super.toString();
+    }
+    return "Generic bean: " + super.toString();
+  }
+
+}
+```
+
+### ConfigurationClassBeanDefinition
+
+**用于描述注解形式的Bean。继承自RootBeanDefinition，相对于父类添加了注解元信息和工厂方法的元信息**
+
+`RootBeanDefinition`标记子类，用于表示bean definition是从配置类创建的，而不是从任何其他配置源创建的。在需要确定bean definition是否是在外部创建的bean重写情况下使用。
+
+![image-20220526095334621](../../../Library/Application%20Support/typora-user-images/image-20220526095334621.png)
+
+### AnnotatedGenericBeanDefinition
+
+**用于描述注解形式的Bean。相对于GenericBeanDefinition只是添加了注解元信息相关操作**
+
+![image-20220526095250008](../../../Library/Application%20Support/typora-user-images/image-20220526095250008.png)
+
+### ScannedGenericBeanDefinition
+
+**用于描述注解形式的Bean。继承自GenericBeanDefinition，添加了注解元信息**
+
+![image-20220526095441635](../../../Library/Application%20Support/typora-user-images/image-20220526095441635.png)
+
+### BeanDefinition为什么要使用父子关系，合成（merge）又是什么意思呢？
+
+对`BeanDefinition`进行merge操作后，会将child的属性与parent的属性进行合并，当有相同属性时，以child的为准，部分属性会取并集，比如包含的属性集合、构造函数集合等。
+
 ### BeanDefinitionReader
 
 该接口定义了读取`BeanDefinition`的API。
 
-### BeadFactory
+### BeanFactory
 
 The root interface for accessing a Spring bean container. 
 
@@ -490,13 +567,120 @@ The [`BeanFactory`](https://docs.spring.io/spring-framework/docs/5.3.20/javadoc-
 - 不会主动调用BeanFactory后置处理器
 - 不会主动添加Bean后置处理器
 - 不会主动初始化单例
-- 不会解析beanFactory，不会解析${}与#{}
+- 不会解析beanFactory，不会解析`${}`与`#{}`
 
 IOC（DI）、Bean生命周期的各种功能，都由该接口的实现类`DefaultListableBeanFactory`提供。
 
 ![image-20220520165329854](../../../Library/Application%20Support/typora-user-images/image-20220520165329854.png)
 
 
+
+### DefaultListableBeanFactory
+
+![image-20220526103815716](../../../Library/Application%20Support/typora-user-images/image-20220526103815716.png)
+
+#### AliasRegistry
+
+该接口定义了给名称`name`添加别名的API。
+
+```java
+public interface AliasRegistry {
+  void registerAlias(String name, String alias);
+  void removeAlias(String alias);
+  boolean isAlias(String name);
+  String[] getAliases(String name);
+
+}
+```
+
+#### BeanDefinitionRegistry
+
+该接口定义了注册`BeanDefinition`的功能。
+
+```java
+public interface BeanDefinitionRegistry extends AliasRegistry {
+  /**
+   * Register a new bean definition with this registry.
+   * Must support RootBeanDefinition and ChildBeanDefinition.
+   */
+  void registerBeanDefinition(String beanName, BeanDefinition beanDefinition)
+      throws BeanDefinitionStoreException;
+  void removeBeanDefinition(String beanName) throws NoSuchBeanDefinitionException;
+  BeanDefinition getBeanDefinition(String beanName) throws NoSuchBeanDefinitionException;
+  boolean containsBeanDefinition(String beanName);
+  String[] getBeanDefinitionNames();
+  int getBeanDefinitionCount();
+  boolean isBeanNameInUse(String beanName);
+}
+
+```
+
+#### ListableBeanFactory
+
+扩展`BeanFactory`的接口，由能够枚举它们包含的bean实例而不是按照clients的请求逐个尝试查找的bean factory实现。预加载所有bean definition的`BeanFactory`可以实现此接口（比如基于XML的工厂）。如果当前是一个`HierarchycalBeanFactory`，则返回值将不会考虑任何`BeanFactory`层次结构，而只与当前`BeanFactory`中定义的bean相关。如果要获得父工厂中的bean，考虑使用`eanFactoryUtils`。
+
+注意：除了`getBeanDefinitionCount`和`containsBeanDefinition`之外，此接口中的方法不是为频繁调用而设计的。实现可能很慢。
+
+```java
+public interface ListableBeanFactory extends BeanFactory {
+  
+  boolean containsBeanDefinition(String beanName);
+
+  int getBeanDefinitionCount();
+
+  String[] getBeanDefinitionNames();
+
+  <T> ObjectProvider<T> getBeanProvider(Class<T> requiredType, boolean allowEagerInit);
+
+  <T> ObjectProvider<T> getBeanProvider(ResolvableType requiredType, boolean allowEagerInit);
+
+  String[] getBeanNamesForType(ResolvableType type);
+
+  String[] getBeanNamesForType(ResolvableType type, boolean includeNonSingletons, boolean allowEagerInit);
+
+  String[] getBeanNamesForType(@Nullable Class<?> type);
+
+  String[] getBeanNamesForType(@Nullable Class<?> type, boolean includeNonSingletons, boolean allowEagerInit);
+
+  <T> Map<String, T> getBeansOfType(@Nullable Class<T> type) throws BeansException;
+
+  <T> Map<String, T> getBeansOfType(@Nullable Class<T> type, boolean includeNonSingletons, boolean allowEagerInit)
+      throws BeansException;
+
+  String[] getBeanNamesForAnnotation(Class<? extends Annotation> annotationType);
+
+  Map<String, Object> getBeansWithAnnotation(Class<? extends Annotation> annotationType) throws BeansException;
+
+  @Nullable
+  <A extends Annotation> A findAnnotationOnBean(String beanName, Class<A> annotationType)
+      throws NoSuchBeanDefinitionException;
+
+  @Nullable
+  <A extends Annotation> A findAnnotationOnBean(
+      String beanName, Class<A> annotationType, boolean allowFactoryBeanInit)
+      throws NoSuchBeanDefinitionException;
+
+}
+```
+
+#### HierarchicalBeanFactory
+
+具有层级关系的`BeanFactory`都应该实现该接口。该接口比较简单，定义了设置`BeanFactory`层级的能力。
+
+```java
+public interface HierarchicalBeanFactory extends BeanFactory {
+
+  @Nullable
+  BeanFactory getParentBeanFactory();
+  // 从当前BeanFactory查找bean，不会去父容器查找
+  boolean containsLocalBean(String name);
+
+}
+```
+
+#### ConfigurableBeanFactory
+
+大多数`BeanFactory`需要实现的接口。提供了配置`BeanFactory`的能力
 
 ### ApplicationContext
 
